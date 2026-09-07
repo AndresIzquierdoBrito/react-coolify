@@ -1,47 +1,38 @@
-import express from 'express';
-import cors from 'cors';
-import dotenv from 'dotenv';
-import axios from 'axios';
+import "dotenv/config";
+import { loadConfig } from "./config.js";
+import { createDatabase } from "./db/index.js";
+import { createApp } from "./app.js";
+import { MonitorService } from "./monitoring/monitor.js";
+import { persistCoolifyResources, persistSentinelServers } from "./coolify/client.js";
 
-dotenv.config();
+const config = loadConfig();
+const db = createDatabase(config.databasePath);
+if (config.OWNER_CONTACT_URL) db.sqlite.prepare(`UPDATE site_settings SET contact_url=?,updated_at=datetime('now') WHERE id=1`).run(config.OWNER_CONTACT_URL);
+const { app, logger, coolify } = createApp(config, db);
+const monitor = new MonitorService(db, config, logger);
 
-const app = express();
-const port = process.env.PORT || 3001;
-
-app.use(cors({ origin: 'http://localhost:3000' }));
-app.use(express.json());
-
-app.get('/projects', async (req, res) => {
+async function syncCoolify() {
+  if (!coolify.configured) return;
   try {
-    const { data } = await axios.get(`${process.env.COOLIFY_API_URL}/api/v1/projects`, {
-      headers: {
-        Authorization: `Bearer ${process.env.COOLIFY_API_KEY}`,
-      },
-    });
+    const { resources, warnings } = await coolify.listResources();
+    persistCoolifyResources(db, resources);
+    const sentinel = await coolify.listSentinelStatus();
+    persistSentinelServers(db, sentinel.servers);
+    logger.info({ count: resources.length, sentinelServers: sentinel.servers.length, warnings: [...warnings, ...sentinel.warnings] }, "Coolify catalog synchronized");
+  } catch (error) { logger.warn({ error }, "Coolify synchronization failed"); }
+}
 
-    console.log("Received data from Coolify API:", JSON.stringify(data, null, 2));
+const server = app.listen(config.PORT, () => logger.info({ port: config.PORT }, "API listening"));
+monitor.start();
+void syncCoolify();
+const syncTimer = setInterval(() => void syncCoolify(), config.COOLIFY_SYNC_INTERVAL_MS);
+syncTimer.unref();
 
-    // Check if the response is an array directly, or has a .projects property
-    const projectList = Array.isArray(data) ? data : data.projects;
-
-    if (!projectList) {
-      throw new Error("Invalid data structure from Coolify API. Expected an array of projects.");
-    }
-
-    const projects = projectList.map((project: any) => ({
-      name: project.name,
-      fqdn: project.fqdn,
-      status: project.status,
-      updatedAt: project.updatedAt,
-    }));
-
-    res.json(projects);
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: 'Failed to fetch projects' });
-  }
-});
-
-app.listen(port, () => {
-  console.log(`Backend server is running on http://localhost:${port}`);
-});
+function shutdown() {
+  clearInterval(syncTimer);
+  monitor.stop();
+  server.close(() => { db.sqlite.close(); process.exit(0); });
+  setTimeout(() => process.exit(1), 10_000).unref();
+}
+process.on("SIGTERM", shutdown);
+process.on("SIGINT", shutdown);

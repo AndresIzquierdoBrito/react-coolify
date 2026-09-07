@@ -1,0 +1,60 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: backend
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      APP_ORIGIN: ${APP_ORIGIN:-https://projects.izbri.com}
+      DATABASE_PATH: /data/projects.sqlite
+      UPLOADS_PATH: /data/uploads
+      SESSION_SECRET: ${SESSION_SECRET:?SESSION_SECRET is required}
+      COOLIFY_API_URL: ${COOLIFY_API_URL:?COOLIFY_API_URL is required}
+      COOLIFY_API_KEY: ${COOLIFY_API_KEY:?COOLIFY_API_KEY is required}
+      NODE_EXTRA_CA_CERTS: ${NODE_EXTRA_CA_CERTS:-}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+      GITHUB_ADMIN_LOGINS: ${GITHUB_ADMIN_LOGINS:-}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:?ADMIN_USERNAME is required}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD is required}
+      OWNER_CONTACT_URL: ${OWNER_CONTACT_URL:-https://izbri.com}
+      ALLOW_PRIVATE_MONITOR_TARGETS: ${ALLOW_PRIVATE_MONITOR_TARGETS:-false}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    volumes:
+      - project_data:/data
+    expose:
+      - "3001"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3001/readyz"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: frontend
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      API_INTERNAL_URL: http://backend:3001
+      NEXT_PUBLIC_APP_URL: ${APP_ORIGIN:-https://projects.izbri.com}
+    expose:
+      - "3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3000/en"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+volumes:
+  project_data:

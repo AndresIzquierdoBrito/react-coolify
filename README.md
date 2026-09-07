@@ -1,54 +1,68 @@
-# React + TypeScript + Vite
+# Izbri Projects
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+A bilingual public portfolio and independent uptime dashboard for the applications and services running in Izbri's Coolify installation.
 
-Currently, two official plugins are available:
+## Architecture
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+- `frontend`: Next.js visitor dashboard and owner interface.
+- `backend`: Express API, temporary credential sessions with optional GitHub OAuth, Coolify catalog adapter, SQLite persistence, media processing, and availability worker.
+- `packages/contracts`: shared Zod schemas and TypeScript response types.
+- `docs/PRODUCT-DESIGN.md`: living product/design reference. Update it whenever identity, product, or interaction directives change.
 
-## Expanding the ESLint configuration
+Coolify is read-only. It supplies resource metadata and safe Sentinel capability/pulse settings; this application owns publication, bilingual content, images, uptime checks, incident history, and latency data.
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+## Local development
 
-```js
-export default tseslint.config({
-  extends: [
-    // Remove ...tseslint.configs.recommended and replace with this
-    ...tseslint.configs.recommendedTypeChecked,
-    // Alternatively, use this for stricter rules
-    ...tseslint.configs.strictTypeChecked,
-    // Optionally, add this for stylistic rules
-    ...tseslint.configs.stylisticTypeChecked,
-  ],
-  languageOptions: {
-    // other options...
-    parserOptions: {
-      project: ['./tsconfig.node.json', './tsconfig.app.json'],
-      tsconfigRootDir: import.meta.dirname,
-    },
-  },
-})
+Requirements: Node.js 24 and npm.
+
+```bash
+cp .env.example backend/.env
+npm install
+npm run dev
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+The web app runs at `http://localhost:3000` and the API at `http://localhost:3001`. Configure `ADMIN_USERNAME` and a long, unique `ADMIN_PASSWORD` to use the temporary `/admin` login. GitHub OAuth remains optional; for local OAuth, use callback `http://localhost:3000/api/v1/auth/github/callback` and set `APP_ORIGIN=http://localhost:3000`.
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+The default development database is `backend/data/projects.sqlite`. Set `DATABASE_PATH` and `UPLOADS_PATH` to override it.
 
-export default tseslint.config({
-  plugins: {
-    // Add the react-x and react-dom plugins
-    'react-x': reactX,
-    'react-dom': reactDom,
-  },
-  rules: {
-    // other rules...
-    // Enable its recommended typescript rules
-    ...reactX.configs['recommended-typescript'].rules,
-    ...reactDom.configs.recommended.rules,
-  },
-})
+## Coolify deployment
+
+1. Set `ADMIN_USERNAME`, a long unique `ADMIN_PASSWORD`, a random `SESSION_SECRET`, and `OWNER_CONTACT_URL` for project problem reports. The contact value may be an HTTPS contact page or a `mailto:` URL. GitHub OAuth can remain empty for now.
+2. Create a Coolify team API token with read-only permissions.
+3. Deploy `compose.yml` as a Docker Compose resource and supply every value from `.env.example`.
+4. Route `projects.izbri.com` to the `frontend` service on port 3000. Do not expose the backend service publicly; Next proxies `/api` and `/media` internally.
+5. Keep the backend at one replica because SQLite and uploaded media share the `project_data` volume.
+
+The first catalog synchronization runs at startup and repeats every five minutes. Imports remain drafts until both locales and a cover image are complete.
+
+### Sentinel
+
+Keep Sentinel's initial `10` second metrics rate, `7` day history, and `60` second push interval unless host load or storage measurements show a reason to change them. Catalog sync reads the server's non-secret Sentinel state and associates it with projects through their Coolify server UUID. It stores enabled/metrics-enabled state, timing settings, and the last pulse; tokens, internal URLs, IPs, and raw payloads are discarded.
+
+Coolify's own implementation reads CPU/RAM history by executing a request inside the Sentinel container, and the public API does not currently expose those time series. This dashboard therefore does not scrape an undocumented internal endpoint or mislabel server-wide CPU/RAM as per-project availability. Uptime and latency continue to come from the dashboard's independent monitor.
+
+### Project media
+
+The required cover is optimized into AVIF/WebP variants. In `/admin`, add up to 12 bilingual carousel images per project, reorder or remove them, and upload animated GIFs without stripping their animation. The backend validates the decoded image format rather than trusting the filename or browser-provided MIME type.
+
+### Coolify connection troubleshooting
+
+- Use the full HTTPS origin; `/api/v1` is added automatically when omitted.
+- Enable API access in Coolify and use the complete `ID|secret` token with `read` permission. The token must belong to the team containing the projects.
+- A `401` means the token is invalid; `403` means its permission or the Coolify API IP allowlist rejected the backend.
+- Coolify must present a certificate trusted by the backend container. For a private CA, mount its PEM into the backend and set `NODE_EXTRA_CA_CERTS` to that in-container path. Do not disable TLS verification.
+- Applications and services synchronize independently. A service endpoint unavailable in a particular Coolify release no longer prevents applications from importing.
+
+## Backup and restore
+
+Pause the backend container before taking a filesystem-level backup so the SQLite database and uploads are consistent. Back up the entire `/data` volume, which contains `projects.sqlite`, its WAL files, and `uploads/`. Restore that directory to a new `project_data` volume with ownership matching the container's `node` user, then start the backend and verify `/readyz`.
+
+## Quality checks
+
+```bash
+npm run typecheck
+npm run lint
+npm test
+npm run build
+docker compose -f compose.yml config
 ```

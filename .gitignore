@@ -5,6 +5,8 @@
 
 # Testing
 /coverage
+frontend/test-results
+frontend/playwright-report
 
 # Next.js
 /.next/
@@ -36,3 +38,5 @@ frontend/.env*.local
 backend/node_modules
 backend/dist
 backend/.env
+backend/data
+packages/*/dist
