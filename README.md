@@ -27,11 +27,14 @@ The default development database is `backend/data/projects.sqlite`. Set `DATABAS
 
 ## Coolify deployment
 
-1. Set `ADMIN_USERNAME`, a long unique `ADMIN_PASSWORD`, a random `SESSION_SECRET`, and `OWNER_CONTACT_URL` for project problem reports. The contact value may be an HTTPS contact page or a `mailto:` URL. GitHub OAuth can remain empty for now.
-2. Create a Coolify team API token with read-only permissions.
-3. Deploy `compose.yml` as a Docker Compose resource and supply every value from `.env.example`.
-4. Route `projects.izbri.com` to the `frontend` service on port 3000. Do not expose the backend service publicly; Next proxies `/api` and `/media` internally.
-5. Keep the backend at one replica because SQLite and uploaded media share the `project_data` volume.
+1. Create a Git-based **Docker Compose** application, select this repository and branch, and set the Compose location to `/compose.yml`.
+2. Create a Coolify team API token with read-only permissions. In the application's environment variables, set `COOLIFY_API_URL`, `COOLIFY_API_KEY`, `APP_ORIGIN`, a random `SESSION_SECRET` of at least 24 characters, and `OWNER_CONTACT_URL`. Keep secrets runtime-only. Coolify recognizes the `:?` declarations in `compose.yml` and will block a deploy if a required value is empty.
+3. Choose at least one owner login method: set `ADMIN_USERNAME` plus a long, unique `ADMIN_PASSWORD`, or configure all three GitHub values. The GitHub OAuth callback is `<APP_ORIGIN>/api/v1/auth/github/callback`.
+4. Assign the public domain to the `frontend` service's internal port `3000`. Do not assign a domain or publish a host port for `backend`; Next proxies `/api`, `/media`, and `/healthz` over the private Compose network.
+5. Deploy and wait for both Compose health checks to pass. Verify `https://your-domain.example/healthz`, `/en`, and `/admin`. The health endpoint should return `{"ok":true}`.
+6. Keep the backend at one replica because SQLite and uploaded media share the automatically managed `project_data` volume. Back up that volume before upgrades or migrations.
+
+The default monitor and catalog-sync intervals are exposed as `MONITOR_INTERVAL_MS` and `COOLIFY_SYNC_INTERVAL_MS`. Change them only after measuring the load. See Coolify's [Docker Compose deployment guide](https://coolify.io/docs/applications/builds/docker-compose) for how the platform handles domains, required variables, health checks, internal networking, and persistent volumes.
 
 The first catalog synchronization runs at startup and repeats every five minutes. Imports remain drafts until both locales and a cover image are complete.
 

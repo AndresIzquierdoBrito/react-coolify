@@ -4,7 +4,9 @@ services:
       context: .
       dockerfile: Dockerfile
       target: backend
+    init: true
     restart: unless-stopped
+    stop_grace_period: 15s
     environment:
       NODE_ENV: production
       PORT: 3001
@@ -18,9 +20,11 @@ services:
       GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
       GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
       GITHUB_ADMIN_LOGINS: ${GITHUB_ADMIN_LOGINS:-}
-      ADMIN_USERNAME: ${ADMIN_USERNAME:?ADMIN_USERNAME is required}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD is required}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       OWNER_CONTACT_URL: ${OWNER_CONTACT_URL:-https://izbri.com}
+      MONITOR_INTERVAL_MS: ${MONITOR_INTERVAL_MS:-60000}
+      COOLIFY_SYNC_INTERVAL_MS: ${COOLIFY_SYNC_INTERVAL_MS:-300000}
       ALLOW_PRIVATE_MONITOR_TARGETS: ${ALLOW_PRIVATE_MONITOR_TARGETS:-false}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     volumes:
@@ -39,6 +43,7 @@ services:
       context: .
       dockerfile: Dockerfile
       target: frontend
+    init: true
     restart: unless-stopped
     environment:
       NODE_ENV: production

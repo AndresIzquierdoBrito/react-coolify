@@ -6,6 +6,22 @@ COPY frontend/package.json frontend/package.json
 COPY packages/contracts/package.json packages/contracts/package.json
 RUN npm ci
 
+FROM node:24-alpine AS backend-production-dependencies
+WORKDIR /app
+COPY package.json package-lock.json ./
+COPY backend/package.json backend/package.json
+COPY frontend/package.json frontend/package.json
+COPY packages/contracts/package.json packages/contracts/package.json
+RUN npm ci --omit=dev --workspace backend --workspace @izbri/contracts
+
+FROM node:24-alpine AS frontend-production-dependencies
+WORKDIR /app
+COPY package.json package-lock.json ./
+COPY backend/package.json backend/package.json
+COPY frontend/package.json frontend/package.json
+COPY packages/contracts/package.json packages/contracts/package.json
+RUN npm ci --omit=dev --workspace frontend --workspace @izbri/contracts
+
 FROM dependencies AS contracts
 COPY packages/contracts packages/contracts
 RUN npm run build -w @izbri/contracts
@@ -24,8 +40,9 @@ FROM node:24-alpine AS backend
 WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=backend-builder /app/package.json /app/package-lock.json ./
-COPY --from=backend-builder /app/node_modules ./node_modules
+COPY --from=backend-production-dependencies /app/node_modules ./node_modules
 COPY --from=backend-builder /app/backend/package.json ./backend/package.json
+COPY --from=backend-production-dependencies /app/backend/node_modules ./backend/node_modules
 COPY --from=backend-builder /app/backend/dist ./backend/dist
 COPY --from=backend-builder /app/packages/contracts/package.json ./packages/contracts/package.json
 COPY --from=backend-builder /app/packages/contracts/dist ./packages/contracts/dist
@@ -40,11 +57,11 @@ ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV API_INTERNAL_URL=http://backend:3001
 COPY --from=frontend-builder /app/package.json /app/package-lock.json ./
-COPY --from=frontend-builder /app/node_modules ./node_modules
-COPY --from=frontend-builder /app/frontend/package.json ./frontend/package.json
-COPY --from=frontend-builder /app/frontend/public ./frontend/public
-COPY --from=frontend-builder /app/frontend/.next ./frontend/.next
-COPY --from=frontend-builder /app/frontend/next.config.ts ./frontend/next.config.ts
+COPY --from=frontend-production-dependencies /app/node_modules ./node_modules
+COPY --from=frontend-builder --chown=node:node /app/frontend/package.json ./frontend/package.json
+COPY --from=frontend-builder --chown=node:node /app/frontend/public ./frontend/public
+COPY --from=frontend-builder --chown=node:node /app/frontend/.next ./frontend/.next
+COPY --from=frontend-builder --chown=node:node /app/frontend/next.config.ts ./frontend/next.config.ts
 COPY --from=frontend-builder /app/packages/contracts/package.json ./packages/contracts/package.json
 COPY --from=frontend-builder /app/packages/contracts/dist ./packages/contracts/dist
 USER node
