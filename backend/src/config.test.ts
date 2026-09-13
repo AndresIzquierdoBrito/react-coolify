@@ -31,4 +31,9 @@ describe("production configuration", () => {
     expect(config.githubAdminLogins).toEqual(new Set(["andresizquierdobrito"]));
     expect(config.passwordAuthConfigured).toBe(false);
   });
+
+  it("treats an empty optional contact URL as unset", () => {
+    const config = loadConfig({ ...productionBase, OWNER_CONTACT_URL: "", GITHUB_CLIENT_ID: "client-id", GITHUB_CLIENT_SECRET: "client-secret", GITHUB_ADMIN_LOGINS: "admin" });
+    expect(config.OWNER_CONTACT_URL).toBeUndefined();
+  });
 });

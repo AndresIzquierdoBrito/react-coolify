@@ -24,7 +24,7 @@ const envSchema = z.object({
   GITHUB_ADMIN_LOGINS: z.string().default(""),
   ADMIN_USERNAME: z.string().default(""),
   ADMIN_PASSWORD: z.string().default(""),
-  OWNER_CONTACT_URL: z.string().url().optional(),
+  OWNER_CONTACT_URL: optionalUrl,
   MONITOR_INTERVAL_MS: z.coerce.number().int().min(10_000).default(60_000),
   COOLIFY_SYNC_INTERVAL_MS: z.coerce.number().int().min(60_000).default(300_000),
   ALLOW_PRIVATE_MONITOR_TARGETS: booleanFromEnv,
