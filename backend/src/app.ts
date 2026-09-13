@@ -9,14 +9,18 @@ import type { AppConfig } from "./config.js";
 import type { DatabaseContext } from "./db/index.js";
 import { configurePassport, authMiddleware, createAuthRouter } from "./auth/index.js";
 import { CoolifyClient } from "./coolify/client.js";
+import { CoolifyTeamRepository } from "./coolify/teams.js";
+import { CoolifySyncOrchestrator } from "./coolify/sync.js";
 import { ProjectRepository } from "./projects/repository.js";
 import { MediaService } from "./media/service.js";
 import { createAdminRouter, createPublicRouter, errorHandler, requestId } from "./http/routes.js";
 
 export function createApp(config: AppConfig, db: DatabaseContext) {
   const app = express();
-  const logger = pino({ level: config.LOG_LEVEL });
+  const logger = pino({ level: config.LOG_LEVEL, redact: ["req.headers.authorization", "req.headers.cookie", "req.body.token", "req.body.COOLIFY_API_KEY", "req.body.apiKey"] });
   const coolify = new CoolifyClient(config);
+  const teams = new CoolifyTeamRepository(db, config);
+  const sync = new CoolifySyncOrchestrator(db, config, teams, coolify);
   const projects = new ProjectRepository(db, config.MONITOR_INTERVAL_MS);
   const media = new MediaService(db, config);
   configurePassport(config);
@@ -36,7 +40,7 @@ export function createApp(config: AppConfig, db: DatabaseContext) {
   });
   app.use("/api/v1/auth", rateLimit({ windowMs: 60_000, limit: 30, standardHeaders: "draft-8", legacyHeaders: false }), createAuthRouter(config));
   app.use("/api/v1", rateLimit({ windowMs: 60_000, limit: 180, standardHeaders: "draft-8", legacyHeaders: false }), createPublicRouter(projects));
-  app.use("/api/v1/admin", rateLimit({ windowMs: 60_000, limit: 120, standardHeaders: "draft-8", legacyHeaders: false }), createAdminRouter({ db, projects, coolify, media }));
+  app.use("/api/v1/admin", rateLimit({ windowMs: 60_000, limit: 120, standardHeaders: "draft-8", legacyHeaders: false }), createAdminRouter({ db, projects, coolify, teams, sync, media }));
   app.use(errorHandler);
-  return { app, logger, coolify, projects };
+  return { app, logger, coolify, teams, sync, projects };
 }

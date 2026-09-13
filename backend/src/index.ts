@@ -3,23 +3,16 @@ import { loadConfig } from "./config.js";
 import { createDatabase } from "./db/index.js";
 import { createApp } from "./app.js";
 import { MonitorService } from "./monitoring/monitor.js";
-import { persistCoolifyResources, persistSentinelServers } from "./coolify/client.js";
 
 const config = loadConfig();
 const db = createDatabase(config.databasePath);
 if (config.OWNER_CONTACT_URL) db.sqlite.prepare(`UPDATE site_settings SET contact_url=?,updated_at=datetime('now') WHERE id=1`).run(config.OWNER_CONTACT_URL);
-const { app, logger, coolify } = createApp(config, db);
+const { app, logger, sync } = createApp(config, db);
 const monitor = new MonitorService(db, config, logger);
 
 async function syncCoolify() {
-  if (!coolify.configured) return;
-  try {
-    const { resources, warnings } = await coolify.listResources();
-    persistCoolifyResources(db, resources);
-    const sentinel = await coolify.listSentinelStatus();
-    persistSentinelServers(db, sentinel.servers);
-    logger.info({ count: resources.length, sentinelServers: sentinel.servers.length, warnings: [...warnings, ...sentinel.warnings] }, "Coolify catalog synchronized");
-  } catch (error) { logger.warn({ error }, "Coolify synchronization failed"); }
+  const outcomes = await sync.syncAll();
+  logger.info({ teams: outcomes.map((outcome) => ({ id: outcome.team.id, status: outcome.status, resources: outcome.resources, warnings: outcome.warnings.length })) }, "Coolify catalog synchronization completed");
 }
 
 const server = app.listen(config.PORT, () => logger.info({ port: config.PORT }, "API listening"));

@@ -37,7 +37,7 @@ export class MonitorService {
     if (this.running) return;
     this.running = true;
     try {
-      const projects = this.db.sqlite.prepare(`SELECT id,health_url,health_method,health_timeout_ms,expected_status_min,expected_status_max FROM projects WHERE published=1 AND monitoring_enabled=1 AND health_url IS NOT NULL`).all() as MonitorProject[];
+      const projects = this.db.sqlite.prepare(`SELECT p.id,p.health_url,p.health_method,p.health_timeout_ms,p.expected_status_min,p.expected_status_max FROM projects p JOIN coolify_resources cr ON cr.id=p.coolify_resource_id JOIN coolify_teams ct ON ct.id=cr.team_id WHERE p.published=1 AND p.monitoring_enabled=1 AND p.health_url IS NOT NULL AND ct.enabled=1`).all() as MonitorProject[];
       for (let index = 0; index < projects.length; index += 5) await Promise.all(projects.slice(index, index + 5).map((project) => this.check(project)));
       this.db.sqlite.prepare(`DELETE FROM health_checks WHERE checked_at < ?`).run(new Date(Date.now() - 30 * 86_400_000).toISOString());
     } catch (error) { this.logger.warn({ error }, "monitor cycle failed"); }

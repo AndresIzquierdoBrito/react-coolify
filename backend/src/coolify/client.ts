@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
 import type { AppConfig } from "../config.js";
 import type { DatabaseContext } from "../db/index.js";
+import type { TeamConnection } from "./teams.js";
 
 export interface NormalizedCoolifyResource {
   id: string;
+  teamId?: string;
   resourceType: "application" | "service";
   resourceUuid: string;
   name: string;
@@ -29,6 +31,7 @@ export interface CoolifySyncWarning {
 }
 
 export interface NormalizedSentinelServer {
+  teamId?: string;
   serverUuid: string;
   name: string;
   enabled: boolean;
@@ -43,6 +46,8 @@ export interface NormalizedSentinelServer {
 export interface CoolifySyncResult {
   resources: NormalizedCoolifyResource[];
   warnings: CoolifySyncWarning[];
+  applicationsSucceeded?: boolean;
+  servicesSucceeded?: boolean;
 }
 
 export class CoolifySyncError extends Error {
@@ -61,14 +66,20 @@ class CoolifyRequestError extends Error {
 }
 
 export class CoolifyClient {
-  constructor(private readonly config: AppConfig) {}
+  constructor(private readonly config: AppConfig, private readonly connection?: TeamConnection) {}
+
+  forTeam(connection: TeamConnection) { return new CoolifyClient(this.config, connection); }
+
+  private get apiUrl() { return this.connection?.apiUrl ?? this.config.coolifyApiUrl; }
+  private get apiKey() { return this.connection?.token ?? this.config.COOLIFY_API_KEY; }
+  private get teamId() { return this.connection?.id ?? "legacy-default"; }
 
   get configured() {
-    return Boolean(this.config.coolifyApiUrl && this.config.COOLIFY_API_KEY);
+    return Boolean(this.apiUrl && this.apiKey);
   }
 
   async listResources(): Promise<CoolifySyncResult> {
-    if (!this.config.coolifyApiUrl || !this.config.COOLIFY_API_KEY) {
+    if (!this.apiUrl || !this.apiKey) {
       throw new CoolifySyncError([{ source: "applications", code: "COOLIFY_NOT_CONFIGURED", message: "Add COOLIFY_API_URL and COOLIFY_API_KEY before synchronizing." }]);
     }
     const [applicationResult, serviceResult] = await Promise.allSettled([
@@ -80,17 +91,17 @@ export class CoolifyClient {
     const applications = settledValue(applicationResult, "applications", warnings);
     const services = settledValue(serviceResult, "services", warnings);
     if (!applications && !services) throw new CoolifySyncError(warnings);
-    const normalizedApplications = (applications ?? []).map((item) => normalizeApplication(item, now));
+    const normalizedApplications = (applications ?? []).map((item) => normalizeApplication(item, now, this.teamId));
     const deploymentResults = await Promise.allSettled(normalizedApplications.map((application) => this.deploymentMetadata(application.resourceUuid)));
     deploymentResults.forEach((result, index) => {
       if (result.status === "fulfilled") Object.assign(normalizedApplications[index]!, result.value);
       else warnings.push(warningFor(result.reason, "deployments"));
     });
-    return { resources: [...normalizedApplications, ...(services ?? []).map((item) => normalizeService(item, now))], warnings };
+    return { resources: [...normalizedApplications, ...(services ?? []).map((item) => normalizeService(item, now, this.teamId))], warnings, applicationsSucceeded: Boolean(applications), servicesSucceeded: Boolean(services) };
   }
 
   async listSentinelStatus(): Promise<{ servers: NormalizedSentinelServer[]; warnings: CoolifySyncWarning[] }> {
-    if (!this.config.coolifyApiUrl || !this.config.COOLIFY_API_KEY) return { servers: [], warnings: [] };
+    if (!this.apiUrl || !this.apiKey) return { servers: [], warnings: [] };
     let servers: Record<string, unknown>[];
     try { servers = await this.getArray("/servers"); }
     catch (error) { return { servers: [], warnings: [warningFor(error, "sentinel")] }; }
@@ -123,9 +134,9 @@ export class CoolifyClient {
   private async getArray(path: string): Promise<Record<string, unknown>[]> {
     let response: Response;
     try {
-      response = await fetch(`${this.config.coolifyApiUrl}${path}`, {
+      response = await fetch(`${this.apiUrl}${path}`, {
         headers: {
-          Authorization: `Bearer ${this.config.COOLIFY_API_KEY}`,
+          Authorization: `Bearer ${this.apiKey}`,
           Accept: "application/json",
         },
         signal: AbortSignal.timeout(15_000),
@@ -142,7 +153,7 @@ export class CoolifyClient {
   private async getObject(path: string): Promise<Record<string, unknown>> {
     let response: Response;
     try {
-      response = await fetch(`${this.config.coolifyApiUrl}${path}`, { headers: { Authorization: `Bearer ${this.config.COOLIFY_API_KEY}`, Accept: "application/json" }, signal: AbortSignal.timeout(15_000) });
+      response = await fetch(`${this.apiUrl}${path}`, { headers: { Authorization: `Bearer ${this.apiKey}`, Accept: "application/json" }, signal: AbortSignal.timeout(15_000) });
     } catch (error) { throw requestFailure(path, error); }
     if (!response.ok) throw new CoolifyRequestError(path, response.status, statusMessage(path, response.status));
     const payload: unknown = await response.json();
@@ -153,7 +164,7 @@ export class CoolifyClient {
   private async deploymentMetadata(applicationUuid: string) {
     const path = `/deployments/applications/${encodeURIComponent(applicationUuid)}?take=20`;
     let response: Response;
-    try { response = await fetch(`${this.config.coolifyApiUrl}${path}`, { headers: { Authorization: `Bearer ${this.config.COOLIFY_API_KEY}`, Accept: "application/json" }, signal: AbortSignal.timeout(15_000) }); }
+    try { response = await fetch(`${this.apiUrl}${path}`, { headers: { Authorization: `Bearer ${this.apiKey}`, Accept: "application/json" }, signal: AbortSignal.timeout(15_000) }); }
     catch (error) { throw requestFailure(path, error); }
     if (!response.ok) throw new CoolifyRequestError(path, response.status, statusMessage(path, response.status));
     const payload: unknown = await response.json();
@@ -208,9 +219,9 @@ function statusMessage(path: string, status: number) {
 export function persistCoolifyResources(db: DatabaseContext, resources: NormalizedCoolifyResource[]) {
   const statement = db.sqlite.prepare(`
     INSERT INTO coolify_resources
-      (id, resource_type, resource_uuid, name, description, status, source_type, source_branch, commit_sha, suggested_urls_json, created_at_source, updated_at_source, server_uuid, deployment_in_progress, last_successful_deployment_at, synced_at)
-    VALUES (@id, @resourceType, @resourceUuid, @name, @description, @status, @sourceType, @branch, @commitSha, @suggestedUrlsJson, @createdAtSource, @updatedAtSource, @serverUuid, @deploymentInProgress, @lastSuccessfulDeploymentAt, @syncedAt)
-    ON CONFLICT(resource_type, resource_uuid) DO UPDATE SET
+      (id, team_id, resource_type, resource_uuid, name, description, status, source_type, source_branch, commit_sha, suggested_urls_json, created_at_source, updated_at_source, server_uuid, deployment_in_progress, last_successful_deployment_at, synced_at)
+    VALUES (@id, @teamId, @resourceType, @resourceUuid, @name, @description, @status, @sourceType, @branch, @commitSha, @suggestedUrlsJson, @createdAtSource, @updatedAtSource, @serverUuid, @deploymentInProgress, @lastSuccessfulDeploymentAt, @syncedAt)
+    ON CONFLICT(team_id, resource_type, resource_uuid) DO UPDATE SET
       name=excluded.name, description=excluded.description, status=excluded.status,
       source_type=excluded.source_type, source_branch=excluded.source_branch, commit_sha=excluded.commit_sha,
       suggested_urls_json=excluded.suggested_urls_json, created_at_source=excluded.created_at_source,
@@ -220,19 +231,24 @@ export function persistCoolifyResources(db: DatabaseContext, resources: Normaliz
       synced_at=excluded.synced_at
   `);
   db.sqlite.transaction((items: NormalizedCoolifyResource[]) => {
-    for (const item of items) statement.run({ ...item, serverUuid: item.serverUuid ?? null, deploymentInProgress: Number(item.deploymentInProgress ?? false), lastSuccessfulDeploymentAt: item.lastSuccessfulDeploymentAt ?? null, hasDeploymentMetadata: Number(item.deploymentInProgress !== undefined), suggestedUrlsJson: JSON.stringify(item.suggestedUrls) });
+    for (const item of items) {
+      const teamId = item.teamId ?? "legacy-default";
+      const id = item.id.includes(`${teamId}:`) ? item.id : `${teamId}:${item.resourceType}:${item.resourceUuid}`;
+      statement.run({ ...item, id, teamId, serverUuid: item.serverUuid ?? null, deploymentInProgress: Number(item.deploymentInProgress ?? false), lastSuccessfulDeploymentAt: item.lastSuccessfulDeploymentAt ?? null, hasDeploymentMetadata: Number(item.deploymentInProgress !== undefined), suggestedUrlsJson: JSON.stringify(item.suggestedUrls) });
+    }
   })(resources);
 }
 
 export function persistSentinelServers(db: DatabaseContext, servers: NormalizedSentinelServer[]) {
-  const statement = db.sqlite.prepare(`INSERT INTO sentinel_servers(server_uuid,name,enabled,metrics_enabled,refresh_rate_seconds,history_days,push_interval_seconds,last_reported_at,synced_at) VALUES(@serverUuid,@name,@enabled,@metricsEnabled,@refreshRateSeconds,@historyDays,@pushIntervalSeconds,@lastReportedAt,@syncedAt) ON CONFLICT(server_uuid) DO UPDATE SET name=excluded.name,enabled=excluded.enabled,metrics_enabled=excluded.metrics_enabled,refresh_rate_seconds=excluded.refresh_rate_seconds,history_days=excluded.history_days,push_interval_seconds=excluded.push_interval_seconds,last_reported_at=excluded.last_reported_at,synced_at=excluded.synced_at`);
-  db.sqlite.transaction((items: NormalizedSentinelServer[]) => items.forEach((item) => statement.run({ ...item, enabled: Number(item.enabled), metricsEnabled: Number(item.metricsEnabled) })))(servers);
+  const statement = db.sqlite.prepare(`INSERT INTO sentinel_servers(team_id,server_uuid,name,enabled,metrics_enabled,refresh_rate_seconds,history_days,push_interval_seconds,last_reported_at,synced_at) VALUES(@teamId,@serverUuid,@name,@enabled,@metricsEnabled,@refreshRateSeconds,@historyDays,@pushIntervalSeconds,@lastReportedAt,@syncedAt) ON CONFLICT(team_id,server_uuid) DO UPDATE SET name=excluded.name,enabled=excluded.enabled,metrics_enabled=excluded.metrics_enabled,refresh_rate_seconds=excluded.refresh_rate_seconds,history_days=excluded.history_days,push_interval_seconds=excluded.push_interval_seconds,last_reported_at=excluded.last_reported_at,synced_at=excluded.synced_at`);
+  db.sqlite.transaction((items: NormalizedSentinelServer[]) => items.forEach((item) => statement.run({ ...item, teamId: item.teamId ?? "legacy-default", enabled: Number(item.enabled), metricsEnabled: Number(item.metricsEnabled) })))(servers);
 }
 
-function normalizeApplication(item: Record<string, unknown>, syncedAt: string): NormalizedCoolifyResource {
+function normalizeApplication(item: Record<string, unknown>, syncedAt: string, teamId: string): NormalizedCoolifyResource {
   const fqdn = typeof item.fqdn === "string" ? item.fqdn : "";
   return {
-    id: `application:${String(item.uuid)}`,
+    id: `${teamId}:application:${String(item.uuid)}`,
+    teamId,
     resourceType: "application",
     resourceUuid: String(item.uuid),
     name: safeText(item.name, "Untitled application"),
@@ -249,11 +265,12 @@ function normalizeApplication(item: Record<string, unknown>, syncedAt: string): 
   };
 }
 
-function normalizeService(item: Record<string, unknown>, syncedAt: string): NormalizedCoolifyResource {
+function normalizeService(item: Record<string, unknown>, syncedAt: string, teamId: string): NormalizedCoolifyResource {
   const candidates: unknown[] = [];
   for (const key of ["fqdn", "url", "urls", "domains", "applications"]) candidates.push(item[key]);
   return {
-    id: `service:${String(item.uuid)}`,
+    id: `${teamId}:service:${String(item.uuid)}`,
+    teamId,
     resourceType: "service",
     resourceUuid: String(item.uuid),
     name: safeText(item.name, "Untitled service"),
