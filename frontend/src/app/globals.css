@@ -320,6 +320,21 @@ a { color: inherit; }
 .sentinel-status.active > svg { color: var(--lime); }
 .sentinel-status > span { display: flex; flex-wrap: wrap; gap: 4px 8px; color: var(--ink-muted); font-size: 11px; line-height: 1.45; }
 .sentinel-status strong { color: var(--ink); }
+.team-list { display: grid; gap: 8px; margin-bottom: 14px; }
+.team-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-2); }
+.team-row > div:first-child { display: grid; min-width: 0; gap: 3px; }
+.team-row strong { font-size: 14px; }
+.team-row small { overflow: hidden; color: var(--ink-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.team-actions { display: flex; flex: 0 0 auto; gap: 8px; }
+.team-sync-status { color: var(--ink-muted); font: 700 9px/1.3 var(--font-mono), monospace; text-transform: uppercase; }
+.team-sync-status.status-success { color: var(--lime-ink, #4d7800); }
+.team-sync-status.status-error { color: var(--danger); }
+.team-sync-status.status-partial { color: var(--warning); }
+.team-form { display: grid; gap: 12px; padding: 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface-2); }
+.team-form label { display: grid; gap: 5px; color: var(--ink-muted); font-size: 10px; font-weight: 700; text-transform: uppercase; }
+.team-form input:not([type="checkbox"]) { min-height: 40px; padding: 0 10px; border: 1px solid var(--line); border-radius: 7px; color: var(--ink); background: var(--surface); font-size: 12px; text-transform: none; }
+.team-form input:disabled { opacity: .65; }
+.checkbox-field { display: flex !important; grid-template-columns: none; align-items: center; gap: 8px !important; text-transform: none !important; }
 .resource-strip { display: grid; grid-auto-columns: minmax(270px, 360px); grid-auto-flow: column; gap: 12px; overflow-x: auto; padding: 2px 2px 9px; scroll-snap-type: x mandatory; }
 .import-card { display: flex; min-height: 250px; flex-direction: column; padding: 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface-2); scroll-snap-align: start; }
 .import-card > div { display: flex; align-items: center; justify-content: space-between; }
@@ -450,4 +465,6 @@ a { color: inherit; }
   .form-grid, .form-grid.three, .cover-editor, .gallery-upload { grid-template-columns: 1fr; }
   .cover-preview { min-height: 190px; }
   .resource-strip { grid-auto-columns: minmax(250px, 86vw); }
+  .team-row { align-items: flex-start; flex-direction: column; }
+  .team-actions { width: 100%; justify-content: flex-end; }
 }

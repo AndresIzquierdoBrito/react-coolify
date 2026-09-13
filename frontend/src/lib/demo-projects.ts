@@ -60,6 +60,7 @@ function makeSummary(index: number, copy: { title: string; summary: string }, re
     maintenanceMessage,
     operationalNoticeType: index === 1 ? "maintenance" : "none",
     resourceType,
+    team: { id: "demo-team", name: "Sample team" },
     technologies: names.map(technology),
     liveUrl: "https://example.com",
     repositoryUrl: index === 0 ? "https://github.com" : null,

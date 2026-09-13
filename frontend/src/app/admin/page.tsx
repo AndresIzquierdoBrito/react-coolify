@@ -10,10 +10,11 @@ import { previewStorageKey } from "@/lib/api";
 import { getChangedProjectFields, getMissingPublicationFields } from "@/lib/admin-form";
 
 interface SessionData { authenticated: boolean; configured: boolean; methods: { github: boolean; password: boolean }; csrfToken: string | null; user: { login: string; displayName: string; avatarUrl: string | null } | null }
-interface CatalogResource { id: string; resourceType: "application" | "service"; resourceUuid: string; name: string; description: string; status: string | null; sourceType: string | null; suggestedUrls: string[]; imported: boolean; syncedAt: string }
+interface CoolifyTeam { id: string; name: string; apiUrl: string | null; credentialSource: "environment" | "database"; tokenConfigured: boolean; enabled: boolean; syncStatus: "never" | "success" | "partial" | "error" | "disabled"; lastAttemptAt: string | null; lastSuccessfulAt: string | null; lastErrorCode: string | null; lastErrorMessage: string | null; syncedResourceCount: number }
+interface CatalogResource { id: string; resourceType: "application" | "service"; resourceUuid: string; name: string; description: string; status: string | null; sourceType: string | null; suggestedUrls: string[]; imported: boolean; syncedAt: string; team: { id: string; name: string } }
 interface SentinelSummary { serverCount: number; enabledCount: number; metricsEnabledCount: number; lastReportedAt: string | null }
 interface AdminGalleryImage { id: string; file_path: string; mime_type: string; alt_en: string; alt_es: string; display_order: number }
-type AdminProject = Record<string, unknown> & { id: string; coolify_name: string; resource_type: string; technologies: { name: string }[]; gallery: AdminGalleryImage[] };
+type AdminProject = Record<string, unknown> & { id: string; coolify_name: string; resource_type: string; team_name: string; technologies: { name: string }[]; gallery: AdminGalleryImage[] };
 type FormErrors = Partial<Record<keyof ProjectInput | "cover" | "galleryAltEn" | "galleryAltEs", string>>;
 
 class ApiMutationError extends Error {
@@ -27,6 +28,7 @@ export default function AdminPage() {
   const [session, setSession] = useState<SessionData | null>(null);
   const [projects, setProjects] = useState<AdminProject[]>([]);
   const [resources, setResources] = useState<CatalogResource[]>([]);
+  const [teams, setTeams] = useState<CoolifyTeam[]>([]);
   const [sentinel, setSentinel] = useState<SentinelSummary>({ serverCount: 0, enabledCount: 0, metricsEnabledCount: 0, lastReportedAt: null });
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selectedIdRef = useRef<string | null>(null);
@@ -36,6 +38,9 @@ export default function AdminPage() {
   const [message, setMessage] = useState<string | null>(null);
   const [formErrors, setFormErrors] = useState<FormErrors>({});
   const [dragging, setDragging] = useState<string | null>(null);
+  const [editingTeamId, setEditingTeamId] = useState<string | null>(null);
+  const [teamFormOpen, setTeamFormOpen] = useState(false);
+  const [teamForm, setTeamForm] = useState({ name: "", apiUrl: "", token: "", enabled: true });
 
   const load = useCallback(async (options: { preserveForm?: boolean } = {}) => {
     const authResponse = await fetch("/api/v1/auth/session", { credentials: "include" });
@@ -62,7 +67,7 @@ export default function AdminPage() {
         } else setForm(saved);
       }
     }
-    if (resourceResponse.ok) { const data = await resourceResponse.json() as { resources: CatalogResource[]; sentinel: SentinelSummary }; setResources(data.resources); setSentinel(data.sentinel); }
+    if (resourceResponse.ok) { const data = await resourceResponse.json() as { resources: CatalogResource[]; teams: CoolifyTeam[]; sentinel: SentinelSummary }; setResources(data.resources); setTeams(data.teams ?? []); setSentinel(data.sentinel); }
   }, []);
 
   useEffect(() => { const timer = window.setTimeout(() => void load(), 0); return () => window.clearTimeout(timer); }, [load]);
@@ -89,14 +94,44 @@ export default function AdminPage() {
 
   async function sync() {
     setSyncing(true); setMessage(null);
-    try { const response = await mutate("/api/v1/admin/coolify/sync", { method: "POST" }); const payload = await response.json() as { resources: CatalogResource[]; synced: number; sentinelServers: number; sentinel: SentinelSummary; warnings?: { message: string }[] }; setResources(payload.resources); setSentinel(payload.sentinel); const summary = `${payload.synced} Coolify resources synchronized. Sentinel status linked for ${payload.sentinelServers} server${payload.sentinelServers === 1 ? "" : "s"}.`; setMessage(payload.warnings?.length ? `${summary} ${payload.warnings.map((warning) => warning.message).join(" ")}` : summary); }
+    try { const response = await mutate("/api/v1/admin/coolify/sync", { method: "POST" }); const payload = await response.json() as { resources: CatalogResource[]; teams: CoolifyTeam[]; synced: number; sentinelServers: number; sentinel: SentinelSummary; warnings?: { message: string }[] }; setResources(payload.resources); setTeams(payload.teams ?? []); setSentinel(payload.sentinel); const summary = `${payload.synced} Coolify resources synchronized across ${payload.teams?.length ?? 0} teams.`; setMessage(payload.warnings?.length ? `${summary} ${payload.warnings.map((warning) => warning.message).join(" ")}` : summary); }
     catch (error) { setMessage(error instanceof Error ? error.message : "Sync failed."); }
     finally { setSyncing(false); }
   }
 
+  function beginTeam(team?: CoolifyTeam) {
+    setTeamFormOpen(true);
+    setEditingTeamId(team?.id ?? null);
+    setTeamForm({ name: team?.name ?? "", apiUrl: team?.apiUrl ?? "", token: "", enabled: team?.enabled ?? true });
+  }
+
+  async function saveTeam(event: React.FormEvent) {
+    event.preventDefault();
+    try {
+      const isEditing = Boolean(editingTeamId);
+      const body: Record<string, unknown> = { name: teamForm.name, apiUrl: teamForm.apiUrl, enabled: teamForm.enabled };
+      if (teamForm.token.trim()) body.token = teamForm.token.trim();
+      const response = await mutate(isEditing ? `/api/v1/admin/coolify/teams/${editingTeamId}` : "/api/v1/admin/coolify/teams", { method: isEditing ? "PUT" : "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+      const payload = await response.json() as { team: CoolifyTeam };
+      setTeams((current) => isEditing ? current.map((item) => item.id === payload.team.id ? payload.team : item) : [...current, payload.team]);
+      setMessage(`${payload.team.name} connection saved.`);
+      setTeamFormOpen(false); setEditingTeamId(null); setTeamForm({ name: "", apiUrl: "", token: "", enabled: true });
+    } catch (error) { setMessage(error instanceof Error ? error.message : "Team connection could not be saved."); }
+  }
+
+  async function syncTeam(id: string) {
+    try {
+      const response = await mutate(`/api/v1/admin/coolify/teams/${id}/sync`, { method: "POST" });
+      const payload = await response.json() as { team: CoolifyTeam; resources: CatalogResource[]; warnings?: { message: string }[] };
+      setTeams((current) => current.map((item) => item.id === id ? payload.team : item));
+      setResources(payload.resources);
+      setMessage(payload.warnings?.length ? payload.warnings.map((warning) => warning.message).join(" ") : `${payload.team.name} synchronized.`);
+    } catch (error) { setMessage(error instanceof Error ? error.message : "Team synchronization failed."); }
+  }
+
   async function importResource(resource: CatalogResource, liveUrl: string) {
     try {
-      const response = await mutate("/api/v1/admin/projects/import", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ resourceType: resource.resourceType, resourceUuid: resource.resourceUuid, liveUrl }) });
+      const response = await mutate("/api/v1/admin/projects/import", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ resourceId: resource.id, liveUrl }) });
       const { id } = await response.json() as { id: string };
       selectedIdRef.current = id; await load(); setMessage(`${resource.name} imported as a draft.`);
     } catch (error) { setMessage(error instanceof Error ? error.message : "Import failed."); }
@@ -182,9 +217,10 @@ export default function AdminPage() {
   return <div className="admin-shell">
     <header className="admin-header"><div><span className="eyebrow"><span className="live-dot" />Owner workspace</span><h1>Project control room<span className="lime-mark">.</span></h1></div><div className="admin-account">{session.user?.avatarUrl && <img src={session.user.avatarUrl} alt="" />}<span><strong>{session.user?.displayName}</strong><small>@{session.user?.login}</small></span><button className="admin-icon-button" onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")} aria-label="Toggle theme">{resolvedTheme === "dark" ? <Sun size={18} /> : <Moon size={18} />}</button><Link className="admin-icon-button" href="/en" aria-label="Open public dashboard"><ArrowUpRight size={18} /></Link><button className="admin-icon-button" onClick={() => void mutate("/api/v1/auth/logout", { method: "POST" }).then(() => location.reload())} aria-label="Sign out"><LogOut size={18} /></button></div></header>
     {message && <div className="admin-toast" role="status">{message}<button onClick={() => setMessage(null)}>×</button></div>}
+    <section className="import-panel team-panel"><div className="section-title"><div><span>Coolify connections</span><h2>{teams.length} teams</h2></div><button className="secondary-button" onClick={() => beginTeam()}><Plus size={16} />Add team</button></div><div className="team-list">{teams.map((team) => <article className="team-row" key={team.id}><div><strong>{team.name}</strong><small>{team.credentialSource === "environment" ? "Deployment-managed credentials" : team.apiUrl}</small><span className={`team-sync-status status-${team.syncStatus}`}>{team.syncStatus}{team.lastAttemptAt ? ` · attempted ${formatAdminDate(team.lastAttemptAt)}` : ""}{team.lastSuccessfulAt ? ` · last success ${formatAdminDate(team.lastSuccessfulAt)}` : ""}</span>{team.lastErrorMessage && <small className="field-error">{team.lastErrorMessage}</small>}</div><div className="team-actions"><button className="text-button" onClick={() => beginTeam(team)}>Edit</button><button className="text-button" onClick={() => void syncTeam(team.id)} disabled={!team.enabled}>Sync</button></div></article>)}</div>{teamFormOpen ? <form className="team-form" onSubmit={saveTeam}><label>Team name<input value={teamForm.name} onChange={(event) => setTeamForm((current) => ({ ...current, name: event.target.value }))} required /></label><label>Coolify API URL<input type="url" value={teamForm.apiUrl} onChange={(event) => setTeamForm((current) => ({ ...current, apiUrl: event.target.value }))} required={!editingTeamId} disabled={Boolean(editingTeamId && teams.find((team) => team.id === editingTeamId)?.credentialSource === "environment")} /></label><label>Read-only API token<input type="password" value={teamForm.token} onChange={(event) => setTeamForm((current) => ({ ...current, token: event.target.value }))} placeholder={editingTeamId ? "Leave blank to keep the existing token" : "ID|secret"} required={!editingTeamId} autoComplete="new-password" /></label><label className="checkbox-field"><input type="checkbox" checked={teamForm.enabled} onChange={(event) => setTeamForm((current) => ({ ...current, enabled: event.target.checked }))} />Enabled</label><div className="editor-actions"><button className="secondary-button" type="button" onClick={() => { setTeamFormOpen(false); setEditingTeamId(null); }}>Cancel</button><button className="primary-button" type="submit"><Save size={16} />Save connection</button></div></form> : null}</section>
     <section className="import-panel"><div className="section-title"><div><span>Coolify catalog</span><h2>Import something new</h2></div><button className="secondary-button" onClick={() => void sync()} disabled={syncing}><RefreshCw size={16} className={syncing ? "spin" : ""} />{syncing ? "Syncing…" : "Sync catalog"}</button></div>{sentinel.serverCount > 0 && <div className={`sentinel-status ${sentinel.metricsEnabledCount > 0 ? "active" : "needs-metrics"}`}><Activity size={18} /><span><strong>Sentinel</strong>{sentinel.metricsEnabledCount > 0 ? `CPU/RAM collection is enabled on ${sentinel.metricsEnabledCount} server${sentinel.metricsEnabledCount === 1 ? "" : "s"}.` : sentinel.enabledCount > 0 ? "The agent is enabled, but Coolify Metrics is off. Enable Metrics on the server Charts page to collect CPU/RAM." : "Sentinel is present but disabled."}</span></div>}{unimported.length === 0 ? <p className="muted-copy">Everything currently available in Coolify has been imported.</p> : <div className="resource-strip">{unimported.map((resource) => <ImportCard key={resource.id} resource={resource} onImport={importResource} />)}</div>}</section>
     <div className="admin-workspace">
-      <aside className="admin-sidebar"><div className="section-title compact"><div><span>Portfolio</span><h2>{projects.length} projects</h2></div></div><div className="admin-project-list">{projects.map((project, index) => <div key={project.id} draggable onDragStart={() => setDragging(project.id)} onDragOver={(event) => event.preventDefault()} onDrop={() => dropProject(project.id)} className={`admin-project-item ${selectedId === project.id ? "selected" : ""}`}><button className="drag-handle" aria-label="Drag to reorder"><GripVertical size={17} /></button><button className="project-select" onClick={() => selectProject(project)}><strong>{String(project.title_en || project.coolify_name)}</strong><span>{project.resource_type} · {Number(project.published) ? "Published" : "Draft"}</span></button><span className="order-buttons"><button onClick={() => moveProject(project.id, -1)} disabled={index === 0} aria-label="Move up"><ArrowUp size={14} /></button><button onClick={() => moveProject(project.id, 1)} disabled={index === projects.length - 1} aria-label="Move down"><ArrowDown size={14} /></button></span></div>)}</div></aside>
+      <aside className="admin-sidebar"><div className="section-title compact"><div><span>Portfolio</span><h2>{projects.length} projects</h2></div></div><div className="admin-project-list">{projects.map((project, index) => <div key={project.id} draggable onDragStart={() => setDragging(project.id)} onDragOver={(event) => event.preventDefault()} onDrop={() => dropProject(project.id)} className={`admin-project-item ${selectedId === project.id ? "selected" : ""}`}><button className="drag-handle" aria-label="Drag to reorder"><GripVertical size={17} /></button><button className="project-select" onClick={() => selectProject(project)}><strong>{String(project.title_en || project.coolify_name)}</strong><span>{project.team_name} · {project.resource_type} · {Number(project.published) ? "Published" : "Draft"}</span></button><span className="order-buttons"><button onClick={() => moveProject(project.id, -1)} disabled={index === 0} aria-label="Move up"><ArrowUp size={14} /></button><button onClick={() => moveProject(project.id, 1)} disabled={index === projects.length - 1} aria-label="Move down"><ArrowDown size={14} /></button></span></div>)}</div></aside>
       <main className="admin-editor">{form && selected ? <ProjectEditor key={selected.id} project={selected} form={form} setForm={setForm} errors={formErrors} clearError={(key) => setFormErrors((current) => ({ ...current, [key]: undefined }))} saving={saving} onSave={save} onPreview={preview} onUpload={uploadCover} onGalleryUpload={uploadGallery} onGalleryDelete={deleteGallery} onGalleryMove={moveGallery} /> : <div className="editor-empty"><Cloud size={38} /><h2>Import or select a project</h2><p>Your Coolify resource remains untouched until you publish its curated dashboard entry.</p></div>}</main>
     </div>
   </div>;
@@ -192,7 +228,7 @@ export default function AdminPage() {
 
 function ImportCard({ resource, onImport }: { resource: CatalogResource; onImport: (resource: CatalogResource, url: string) => void }) {
   const [url, setUrl] = useState(resource.suggestedUrls[0] ?? "");
-  return <article className="import-card"><div><span className="resource-pill">{resource.resourceType}</span><small>{resource.sourceType ?? "Coolify resource"}</small></div><h3>{resource.name}</h3><p>{resource.description || "No description in Coolify."}</p><label>Public URL<input type="url" value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://example.com" /></label><button className="primary-button" onClick={() => onImport(resource, url)} disabled={!url}><Plus size={16} />Import draft</button></article>;
+  return <article className="import-card"><div><span className="resource-pill">{resource.resourceType}</span><small>{resource.team.name} · {resource.sourceType ?? "Coolify resource"}</small></div><h3>{resource.name}</h3><p>{resource.description || "No description in Coolify."}</p><label>Public URL<input type="url" value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://example.com" /></label><button className="primary-button" onClick={() => onImport(resource, url)} disabled={!url}><Plus size={16} />Import draft</button></article>;
 }
 
 function ProjectEditor({ project, form, setForm, errors, clearError, saving, onSave, onPreview, onUpload, onGalleryUpload, onGalleryDelete, onGalleryMove }: { project: AdminProject; form: ProjectInput; setForm: (form: ProjectInput) => void; errors: FormErrors; clearError: (key: keyof FormErrors) => void; saving: boolean; onSave: () => void; onPreview: () => void; onUpload: (file: File) => void; onGalleryUpload: (file: File, altEn: string, altEs: string) => Promise<boolean>; onGalleryDelete: (imageId: string) => void; onGalleryMove: (imageId: string, direction: -1 | 1) => void }) {
@@ -216,7 +252,7 @@ function ProjectEditor({ project, form, setForm, errors, clearError, saving, onS
     }
   }
   return <form noValidate onSubmit={(event) => { event.preventDefault(); void onSave(); }}>
-    <div className={`editor-header ${dirtyFields.length ? "has-unsaved-changes" : ""}`}><div><span className="resource-pill">{project.resource_type}</span>{dirtyFields.length > 0 && <span className="unsaved-count" role="status">{dirtyFields.length} unsaved {dirtyFields.length === 1 ? "change" : "changes"}</span>}<h2>{form.titleEn || project.coolify_name}</h2><p>Coolify source: {project.coolify_name} · Your public project names remain fully editable.</p></div><div className="editor-actions"><button className="secondary-button" type="button" onClick={() => void onPreview()} disabled={saving}>Preview changes<ArrowUpRight size={16} /></button><button className="primary-button" type="submit" disabled={saving}><Save size={16} />{saving ? "Saving…" : "Save project"}</button></div></div>
+    <div className={`editor-header ${dirtyFields.length ? "has-unsaved-changes" : ""}`}><div><span className="resource-pill">{project.resource_type}</span><span className="source-pill">{project.team_name}</span>{dirtyFields.length > 0 && <span className="unsaved-count" role="status">{dirtyFields.length} unsaved {dirtyFields.length === 1 ? "change" : "changes"}</span>}<h2>{form.titleEn || project.coolify_name}</h2><p>Coolify source: {project.coolify_name} · Your public project names remain fully editable.</p></div><div className="editor-actions"><button className="secondary-button" type="button" onClick={() => void onPreview()} disabled={saving}>Preview changes<ArrowUpRight size={16} /></button><button className="primary-button" type="submit" disabled={saving}><Save size={16} />{saving ? "Saving…" : "Save project"}</button></div></div>
     <fieldset><legend>Publishing</legend><div className="form-grid three"><Field label="Slug" error={errors.slug} changed={isChanged("slug")}><input value={form.slug} onChange={(event) => set("slug", event.target.value)} aria-invalid={Boolean(errors.slug)} /></Field><Field label="Display order" error={errors.displayOrder} changed={isChanged("displayOrder")}><input type="number" min="0" value={form.displayOrder} onChange={(event) => set("displayOrder", Number(event.target.value))} aria-invalid={Boolean(errors.displayOrder)} /></Field><Field label="Active notice" error={errors.operationalNoticeType} changed={isChanged("operationalNoticeType")}><select value={form.operationalNoticeType} onChange={(event) => set("operationalNoticeType", event.target.value as ProjectInput["operationalNoticeType"])} aria-invalid={Boolean(errors.operationalNoticeType)}><option value="none">No manual notice</option><option value="maintenance">Maintenance in progress</option><option value="restart">Restart in progress</option><option value="update">Update in progress</option></select></Field><div className="toggle-stack"><Toggle label="Featured project" checked={form.featured} changed={isChanged("featured")} onChange={(value) => set("featured", value)} /><Toggle label="Published" checked={form.published} changed={isChanged("published")} onChange={(value) => set("published", value)} /></div></div></fieldset>
     <fieldset className={isChanged("accentColor") ? "has-unsaved-changes" : undefined}><legend>Project color</legend><p className="fieldset-intro">Choose a bright accent for this project. It changes artwork, selection rings, carousel details, and other identity highlights without changing health-status colors.{isChanged("accentColor") && <strong className="inline-edited">Edited</strong>}</p><AccentPicker value={form.accentColor} onChange={(value) => set("accentColor", value)} /></fieldset>
     <fieldset><legend>English content</legend><div className="form-grid"><Field label="Public project name (English)" error={errors.titleEn} changed={isChanged("titleEn")}><input value={form.titleEn} maxLength={120} onChange={(event) => set("titleEn", event.target.value)} aria-invalid={Boolean(errors.titleEn)} /></Field><Field label="Summary" error={errors.summaryEn} changed={isChanged("summaryEn")}><textarea rows={3} value={form.summaryEn} maxLength={280} onChange={(event) => set("summaryEn", event.target.value)} aria-invalid={Boolean(errors.summaryEn)} /></Field>{form.operationalNoticeType !== "none" && <Field label="Operational notice message" wide error={errors.maintenanceMessageEn} changed={isChanged("maintenanceMessageEn")}><textarea rows={2} value={form.maintenanceMessageEn} maxLength={280} onChange={(event) => set("maintenanceMessageEn", event.target.value)} aria-invalid={Boolean(errors.maintenanceMessageEn)} placeholder="Explain the maintenance, restart, or update currently underway." /></Field>}<Field label="Detailed overview" wide error={errors.descriptionEn} changed={isChanged("descriptionEn")}><textarea rows={7} value={form.descriptionEn} maxLength={4000} onChange={(event) => set("descriptionEn", event.target.value)} aria-invalid={Boolean(errors.descriptionEn)} /></Field></div></fieldset>
@@ -304,4 +340,9 @@ function toForm(project: AdminProject): ProjectInput {
   const accent = string("accent_color");
   const noticeType = string("operational_notice_type");
   return { slug: string("slug"), titleEn: string("title_en"), titleEs: string("title_es"), summaryEn: string("summary_en"), summaryEs: string("summary_es"), descriptionEn: string("description_en"), descriptionEs: string("description_es"), maintenanceMessageEn: string("maintenance_message_en"), maintenanceMessageEs: string("maintenance_message_es"), operationalNoticeType: (["maintenance", "restart", "update"].includes(noticeType) ? noticeType : "none") as ProjectInput["operationalNoticeType"], liveUrl: string("live_url"), repositoryUrl: string("repository_url"), caseStudyUrl: string("case_study_url"), technologyNames: project.technologies?.map((technology) => technology.name) ?? [], featured: Boolean(project.featured), published: Boolean(project.published), displayOrder: Number(project.display_order ?? 0), accentColor: projectAccents.some((option) => option.value === accent) ? accent as ProjectInput["accentColor"] : "lime", monitoringEnabled: Boolean(project.monitoring_enabled), uptimeStartDate: string("uptime_start_date") || new Date().toISOString().slice(0, 10), healthUrl: string("health_url") || string("live_url"), healthMethod: string("health_method") === "HEAD" ? "HEAD" : "GET", healthTimeoutMs: Number(project.health_timeout_ms ?? 10000), expectedStatusMin: Number(project.expected_status_min ?? 200), expectedStatusMax: Number(project.expected_status_max ?? 399), coverAltEn: string("alt_en"), coverAltEs: string("alt_es") };
+}
+
+function formatAdminDate(value: string) {
+  try { return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)); }
+  catch { return value; }
 }

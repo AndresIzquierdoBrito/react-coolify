@@ -2,7 +2,7 @@ import { projectInputSchema, type Locale, type ProjectDetail, type ProjectInput,
 import { getDemoProjectDetail, getDemoProjects } from "./demo-projects";
 
 const internalApi = process.env.API_INTERNAL_URL ?? "http://localhost:3001";
-export interface SiteData { title: string; githubUrl: string | null; contactUrl: string | null; technologies: { id: string; name: string; slug: string }[] }
+export interface SiteData { title: string; githubUrl: string | null; contactUrl: string | null; technologies: { id: string; name: string; slug: string }[]; teams: { id: string; name: string }[] }
 
 export async function getInitialDashboard(locale: Locale): Promise<{ projects: ProjectSummary[]; site: SiteData; available: boolean; sample: boolean }> {
   try {
@@ -14,10 +14,10 @@ export async function getInitialDashboard(locale: Locale): Promise<{ projects: P
     const [{ projects }, site] = await Promise.all([projectResponse.json() as Promise<{ projects: ProjectSummary[] }>, siteResponse.json() as Promise<SiteData>]);
     if (projects.length > 0) return { projects, site, available: true, sample: false };
     const samples = getDemoProjects(locale);
-    return { projects: samples, site: { ...site, technologies: uniqueTechnologies(samples) }, available: true, sample: true };
+    return { projects: samples, site: { ...site, technologies: uniqueTechnologies(samples), teams: [{ id: "demo-team", name: "Sample team" }] }, available: true, sample: true };
   } catch {
     const samples = getDemoProjects(locale);
-    return { projects: samples, site: { title: "Izbri Projects", githubUrl: null, contactUrl: null, technologies: uniqueTechnologies(samples) }, available: false, sample: true };
+    return { projects: samples, site: { title: "Izbri Projects", githubUrl: null, contactUrl: null, technologies: uniqueTechnologies(samples), teams: [{ id: "demo-team", name: "Sample team" }] }, available: false, sample: true };
   }
 }
 

@@ -27,6 +27,7 @@ export const projectHealthSchema = z.enum([
   "collecting",
   "unknown",
 ]);
+export const projectTeamSchema = z.object({ id: z.string(), name: z.string() });
 export const operationalNoticeTypeSchema = z.enum(["none", "maintenance", "restart", "update"]);
 export const calendarDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => {
   const date = new Date(`${value}T00:00:00.000Z`);
@@ -79,6 +80,7 @@ export const projectSummarySchema = z.object({
   featured: z.boolean(),
   displayOrder: z.number(),
   accentColor: projectAccentSchema,
+  team: projectTeamSchema,
   coolify: z.object({
     runtimeStatus: z.string().nullable(),
     sourceType: z.string().nullable(),
@@ -166,11 +168,18 @@ export const projectInputSchema = z.object({
 });
 export type ProjectInput = z.infer<typeof projectInputSchema>;
 
-export const importProjectSchema = z.object({
-  resourceType: resourceTypeSchema,
-  resourceUuid: z.string().min(1),
-  liveUrl: z.string().url(),
+export const importProjectSchema = z.object({ liveUrl: z.string().url() }).and(z.union([
+  z.object({ resourceId: z.string().min(1), resourceType: resourceTypeSchema.optional(), resourceUuid: z.string().min(1).optional(), teamId: z.string().min(1).optional() }),
+  z.object({ resourceType: resourceTypeSchema, resourceUuid: z.string().min(1), teamId: z.string().min(1).optional(), resourceId: z.string().min(1).optional() }),
+]));
+
+export const coolifyTeamInputSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  apiUrl: z.string().url(),
+  token: z.string().trim().min(1).optional(),
+  enabled: z.boolean().default(true),
 });
+export const coolifyTeamUpdateSchema = coolifyTeamInputSchema.partial();
 
 export const reorderProjectsSchema = z.object({
   ids: z.array(z.string()).min(1),
