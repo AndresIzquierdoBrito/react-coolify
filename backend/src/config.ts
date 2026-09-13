@@ -5,6 +5,8 @@ const booleanFromEnv = z
   .string()
   .optional()
   .transform((value) => value === "true");
+const optionalUrl = z.preprocess((value) => value === "" ? undefined : value, z.string().url().optional());
+const optionalString = z.preprocess((value) => value === "" ? undefined : value, z.string().optional());
 
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
@@ -13,8 +15,10 @@ const envSchema = z.object({
   DATABASE_PATH: z.string().default("./data/projects.sqlite"),
   UPLOADS_PATH: z.string().default("./data/uploads"),
   SESSION_SECRET: z.string().min(24).default("development-only-change-this-secret"),
-  COOLIFY_API_URL: z.string().url().optional(),
-  COOLIFY_API_KEY: z.string().optional(),
+  COOLIFY_API_URL: optionalUrl,
+  COOLIFY_API_KEY: optionalString,
+  COOLIFY_TEAM_NAME: z.string().trim().min(1).max(120).default("Default team"),
+  COOLIFY_CREDENTIALS_KEY: optionalString,
   GITHUB_CLIENT_ID: z.string().optional(),
   GITHUB_CLIENT_SECRET: z.string().optional(),
   GITHUB_ADMIN_LOGINS: z.string().default(""),
@@ -48,6 +52,7 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env) {
         ? coolifyRoot
         : `${coolifyRoot}/api/v1`
       : undefined,
+    coolifyCredentialsKey: parsed.COOLIFY_CREDENTIALS_KEY,
     githubAdminLogins,
     githubAuthConfigured: Boolean(parsed.GITHUB_CLIENT_ID && parsed.GITHUB_CLIENT_SECRET && githubAdminLogins.size),
     passwordAuthConfigured: !isProduction && Boolean(parsed.ADMIN_USERNAME && parsed.ADMIN_PASSWORD),

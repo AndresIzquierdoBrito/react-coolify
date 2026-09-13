@@ -1,9 +1,33 @@
-import { integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { integer, primaryKey, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+
+export const coolifyTeams = sqliteTable(
+  "coolify_teams",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    apiUrl: text("api_url"),
+    credentialSource: text("credential_source", { enum: ["environment", "database"] }).notNull().default("database"),
+    tokenCiphertext: text("token_ciphertext"),
+    tokenIv: text("token_iv"),
+    tokenAuthTag: text("token_auth_tag"),
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    syncStatus: text("sync_status", { enum: ["never", "success", "partial", "error"] }).notNull().default("never"),
+    lastAttemptAt: text("last_attempt_at"),
+    lastSuccessfulAt: text("last_successful_at"),
+    lastErrorCode: text("last_error_code"),
+    lastErrorMessage: text("last_error_message"),
+    syncedResourceCount: integer("synced_resource_count").notNull().default(0),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [uniqueIndex("coolify_team_name_unique").on(table.name)],
+);
 
 export const coolifyResources = sqliteTable(
   "coolify_resources",
   {
     id: text("id").primaryKey(),
+    teamId: text("team_id").notNull().default("legacy-default").references(() => coolifyTeams.id),
     resourceType: text("resource_type", { enum: ["application", "service"] }).notNull(),
     resourceUuid: text("resource_uuid").notNull(),
     name: text("name").notNull(),
@@ -20,11 +44,12 @@ export const coolifyResources = sqliteTable(
     lastSuccessfulDeploymentAt: text("last_successful_deployment_at"),
     syncedAt: text("synced_at").notNull(),
   },
-  (table) => [uniqueIndex("coolify_resource_unique").on(table.resourceType, table.resourceUuid)],
+  (table) => [uniqueIndex("coolify_resource_unique").on(table.teamId, table.resourceType, table.resourceUuid)],
 );
 
 export const sentinelServers = sqliteTable("sentinel_servers", {
-  serverUuid: text("server_uuid").primaryKey(),
+  teamId: text("team_id").notNull().default("legacy-default").references(() => coolifyTeams.id),
+  serverUuid: text("server_uuid").notNull(),
   name: text("name").notNull().default(""),
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(false),
   metricsEnabled: integer("metrics_enabled", { mode: "boolean" }).notNull().default(false),
@@ -33,7 +58,7 @@ export const sentinelServers = sqliteTable("sentinel_servers", {
   pushIntervalSeconds: integer("push_interval_seconds"),
   lastReportedAt: text("last_reported_at"),
   syncedAt: text("synced_at").notNull(),
-});
+}, (table) => [primaryKey({ columns: [table.teamId, table.serverUuid] })]);
 
 export const projects = sqliteTable(
   "projects",

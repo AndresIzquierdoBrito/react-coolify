@@ -21,17 +21,35 @@ export function createDatabase(databasePath: string): DatabaseContext {
 
 function migrate(db: Database.Database) {
   db.exec(`
+    CREATE TABLE IF NOT EXISTS coolify_teams (
+      id TEXT PRIMARY KEY, name TEXT NOT NULL, api_url TEXT,
+      credential_source TEXT NOT NULL DEFAULT 'database',
+      token_ciphertext TEXT, token_iv TEXT, token_auth_tag TEXT,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      sync_status TEXT NOT NULL DEFAULT 'never',
+      last_attempt_at TEXT, last_successful_at TEXT,
+      last_error_code TEXT, last_error_message TEXT,
+      synced_resource_count INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+      UNIQUE(name COLLATE NOCASE)
+    );
     CREATE TABLE IF NOT EXISTS coolify_resources (
-      id TEXT PRIMARY KEY, resource_type TEXT NOT NULL, resource_uuid TEXT NOT NULL,
+      id TEXT PRIMARY KEY, team_id TEXT NOT NULL DEFAULT 'legacy-default' REFERENCES coolify_teams(id),
+      resource_type TEXT NOT NULL, resource_uuid TEXT NOT NULL,
       name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', status TEXT,
       source_type TEXT, suggested_urls_json TEXT NOT NULL DEFAULT '[]',
-      created_at_source TEXT, synced_at TEXT NOT NULL,
-      UNIQUE(resource_type, resource_uuid)
+      source_branch TEXT, commit_sha TEXT, updated_at_source TEXT,
+      created_at_source TEXT, server_uuid TEXT,
+      deployment_in_progress INTEGER NOT NULL DEFAULT 0,
+      last_successful_deployment_at TEXT, synced_at TEXT NOT NULL,
+      UNIQUE(team_id, resource_type, resource_uuid)
     );
     CREATE TABLE IF NOT EXISTS sentinel_servers (
-      server_uuid TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', enabled INTEGER NOT NULL DEFAULT 0,
+      team_id TEXT NOT NULL DEFAULT 'legacy-default' REFERENCES coolify_teams(id),
+      server_uuid TEXT NOT NULL, name TEXT NOT NULL DEFAULT '', enabled INTEGER NOT NULL DEFAULT 0,
       metrics_enabled INTEGER NOT NULL DEFAULT 0, refresh_rate_seconds INTEGER,
-      history_days INTEGER, push_interval_seconds INTEGER, last_reported_at TEXT, synced_at TEXT NOT NULL
+      history_days INTEGER, push_interval_seconds INTEGER, last_reported_at TEXT, synced_at TEXT NOT NULL,
+      PRIMARY KEY(team_id, server_uuid)
     );
     CREATE TABLE IF NOT EXISTS projects (
       id TEXT PRIMARY KEY, coolify_resource_id TEXT NOT NULL UNIQUE REFERENCES coolify_resources(id),
@@ -108,6 +126,11 @@ function migrate(db: Database.Database) {
   ensureColumn(db, "coolify_resources", "server_uuid", "TEXT");
   ensureColumn(db, "coolify_resources", "deployment_in_progress", "INTEGER NOT NULL DEFAULT 0");
   ensureColumn(db, "coolify_resources", "last_successful_deployment_at", "TEXT");
+  ensureColumn(db, "coolify_resources", "team_id", "TEXT NOT NULL DEFAULT 'legacy-default'");
+  ensureColumn(db, "sentinel_servers", "team_id", "TEXT NOT NULL DEFAULT 'legacy-default'");
+  ensureLegacyTeam(db);
+  migrateLegacyCoolifyResources(db);
+  migrateLegacySentinelServers(db);
   ensureColumn(db, "projects", "accent_color", "TEXT NOT NULL DEFAULT 'lime'");
   ensureColumn(db, "projects", "maintenance_message_en", "TEXT NOT NULL DEFAULT ''");
   ensureColumn(db, "projects", "maintenance_message_es", "TEXT NOT NULL DEFAULT ''");
@@ -139,3 +162,78 @@ function ensureColumn(db: Database.Database, table: string, column: string, defi
   const columns = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
   if (!columns.some((item) => item.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
 }
+
+function ensureLegacyTeam(db: Database.Database) {
+  const now = new Date().toISOString();
+  db.prepare(`
+    INSERT OR IGNORE INTO coolify_teams
+      (id,name,api_url,credential_source,enabled,sync_status,synced_resource_count,created_at,updated_at)
+    VALUES ('legacy-default','Default team',NULL,'environment',1,'never',0,?,?)
+  `).run(now, now);
+}
+
+function migrateLegacyCoolifyResources(db: Database.Database) {
+  const indexes = db.prepare(`PRAGMA index_list(coolify_resources)`).all() as { name: string; unique: number }[];
+  const legacyUnique = indexes.some((index) => {
+    if (!index.unique) return false;
+    const columns = db.prepare(`PRAGMA index_info(${quoteIdentifier(index.name)})`).all() as { name: string | null }[];
+    return columns.map((column) => column.name).join(",") === "resource_type,resource_uuid";
+  });
+  if (!legacyUnique) return;
+  db.pragma("foreign_keys = OFF");
+  try {
+    db.exec(`
+      CREATE TABLE coolify_resources_v2 (
+        id TEXT PRIMARY KEY, team_id TEXT NOT NULL DEFAULT 'legacy-default',
+        resource_type TEXT NOT NULL, resource_uuid TEXT NOT NULL,
+        name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', status TEXT,
+        source_type TEXT, source_branch TEXT, commit_sha TEXT,
+        suggested_urls_json TEXT NOT NULL DEFAULT '[]', created_at_source TEXT,
+        updated_at_source TEXT, server_uuid TEXT,
+        deployment_in_progress INTEGER NOT NULL DEFAULT 0,
+        last_successful_deployment_at TEXT, synced_at TEXT NOT NULL,
+        UNIQUE(team_id, resource_type, resource_uuid)
+      );
+    `);
+    const rows = db.prepare(`SELECT id,team_id,resource_type,resource_uuid,name,description,status,source_type,source_branch,commit_sha,suggested_urls_json,created_at_source,updated_at_source,server_uuid,deployment_in_progress,last_successful_deployment_at,synced_at FROM coolify_resources`).all() as Record<string, unknown>[];
+    const insert = db.prepare(`INSERT INTO coolify_resources_v2(id,team_id,resource_type,resource_uuid,name,description,status,source_type,source_branch,commit_sha,suggested_urls_json,created_at_source,updated_at_source,server_uuid,deployment_in_progress,last_successful_deployment_at,synced_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+    const updateProjects = db.prepare(`UPDATE projects SET coolify_resource_id=? WHERE coolify_resource_id=?`);
+    for (const row of rows) {
+      const teamId = String(row.team_id || "legacy-default");
+      const type = String(row.resource_type);
+      const uuid = String(row.resource_uuid);
+      const nextId = `${teamId}:${type}:${uuid}`;
+      insert.run(nextId, teamId, type, uuid, row.name, row.description, row.status, row.source_type, row.source_branch, row.commit_sha, row.suggested_urls_json, row.created_at_source, row.updated_at_source, row.server_uuid, row.deployment_in_progress, row.last_successful_deployment_at, row.synced_at);
+      updateProjects.run(nextId, row.id);
+    }
+    db.exec(`DROP TABLE coolify_resources; ALTER TABLE coolify_resources_v2 RENAME TO coolify_resources;`);
+  } finally {
+    db.pragma("foreign_keys = ON");
+  }
+}
+
+function migrateLegacySentinelServers(db: Database.Database) {
+  const columns = db.prepare(`PRAGMA table_info(sentinel_servers)`).all() as { name: string; pk: number }[];
+  const legacyPrimaryKey = columns.some((column) => column.name === "server_uuid" && column.pk === 1) && !columns.some((column) => column.name === "team_id" && column.pk === 1);
+  if (!legacyPrimaryKey) return;
+  db.pragma("foreign_keys = OFF");
+  try {
+    db.exec(`
+      CREATE TABLE sentinel_servers_v2 (
+        team_id TEXT NOT NULL DEFAULT 'legacy-default', server_uuid TEXT NOT NULL,
+        name TEXT NOT NULL DEFAULT '', enabled INTEGER NOT NULL DEFAULT 0,
+        metrics_enabled INTEGER NOT NULL DEFAULT 0, refresh_rate_seconds INTEGER,
+        history_days INTEGER, push_interval_seconds INTEGER, last_reported_at TEXT,
+        synced_at TEXT NOT NULL, PRIMARY KEY(team_id, server_uuid)
+      );
+      INSERT INTO sentinel_servers_v2(team_id,server_uuid,name,enabled,metrics_enabled,refresh_rate_seconds,history_days,push_interval_seconds,last_reported_at,synced_at)
+        SELECT COALESCE(team_id,'legacy-default'),server_uuid,name,enabled,metrics_enabled,refresh_rate_seconds,history_days,push_interval_seconds,last_reported_at,synced_at FROM sentinel_servers;
+      DROP TABLE sentinel_servers;
+      ALTER TABLE sentinel_servers_v2 RENAME TO sentinel_servers;
+    `);
+  } finally {
+    db.pragma("foreign_keys = ON");
+  }
+}
+
+function quoteIdentifier(value: string) { return `"${value.replaceAll('"', '""')}"`; }
