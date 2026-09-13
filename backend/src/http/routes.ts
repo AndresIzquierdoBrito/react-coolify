@@ -122,7 +122,7 @@ export function errorHandler(error: unknown, _request: Request, response: Respon
   if (error instanceof CoolifySyncError) return response.status(error.status).json({ error: { code: error.code, message: error.message, requestId: response.locals.requestId, details: error.warnings } });
   const isZod = error && typeof error === "object" && "issues" in error;
   const message = error instanceof Error ? error.message : "Unexpected server error";
-  const known = ["RESOURCE_NOT_FOUND", "RESOURCE_ALREADY_IMPORTED", "INVALID_STATUS_RANGE", "INCOMPLETE_TRANSLATIONS", "INCOMPLETE_MAINTENANCE_TRANSLATIONS", "COVER_REQUIRED", "PROJECT_NOT_FOUND", "UNSUPPORTED_IMAGE", "GALLERY_ALT_REQUIRED", "GALLERY_LIMIT", "GALLERY_IMAGE_NOT_FOUND", "INVALID_GALLERY_ORDER"].includes(message);
+  const known = ["RESOURCE_NOT_FOUND", "RESOURCE_ALREADY_IMPORTED", "INVALID_STATUS_RANGE", "INVALID_UPTIME_START_DATE", "INCOMPLETE_TRANSLATIONS", "INCOMPLETE_MAINTENANCE_TRANSLATIONS", "COVER_REQUIRED", "PROJECT_NOT_FOUND", "UNSUPPORTED_IMAGE", "GALLERY_ALT_REQUIRED", "GALLERY_LIMIT", "GALLERY_IMAGE_NOT_FOUND", "INVALID_GALLERY_ORDER"].includes(message);
   const status = isZod ? 400 : known ? 422 : 500;
   const projectDetails = error instanceof ProjectValidationError ? error.fields.map((field) => ({ path: [field], message: "Required before publishing." })) : undefined;
   response.status(status).json({ error: { code: isZod ? "VALIDATION_ERROR" : known ? message : "INTERNAL_ERROR", message: isZod ? "The submitted data is invalid." : known ? humanize(message) : "An unexpected error occurred.", requestId: response.locals.requestId, details: isZod ? (error as { issues: unknown }).issues : projectDetails } });

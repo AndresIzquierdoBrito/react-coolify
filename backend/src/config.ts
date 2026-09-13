@@ -31,7 +31,14 @@ export type AppConfig = ReturnType<typeof loadConfig>;
 
 export function loadConfig(source: NodeJS.ProcessEnv = process.env) {
   const parsed = envSchema.parse(source);
+  if (parsed.NODE_ENV === "production") validateProductionConfig(parsed);
   const coolifyRoot = parsed.COOLIFY_API_URL?.replace(/\/$/, "");
+  const isProduction = parsed.NODE_ENV === "production";
+  const githubAdminLogins = new Set(
+    parsed.GITHUB_ADMIN_LOGINS.split(",")
+      .map((login) => login.trim().toLowerCase())
+      .filter(Boolean),
+  );
   return {
     ...parsed,
     databasePath: path.resolve(parsed.DATABASE_PATH),
@@ -41,12 +48,20 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env) {
         ? coolifyRoot
         : `${coolifyRoot}/api/v1`
       : undefined,
-    githubAdminLogins: new Set(
-      parsed.GITHUB_ADMIN_LOGINS.split(",")
-        .map((login) => login.trim().toLowerCase())
-        .filter(Boolean),
-    ),
-    passwordAuthConfigured: Boolean(parsed.ADMIN_USERNAME && parsed.ADMIN_PASSWORD),
-    isProduction: parsed.NODE_ENV === "production",
+    githubAdminLogins,
+    githubAuthConfigured: Boolean(parsed.GITHUB_CLIENT_ID && parsed.GITHUB_CLIENT_SECRET && githubAdminLogins.size),
+    passwordAuthConfigured: !isProduction && Boolean(parsed.ADMIN_USERNAME && parsed.ADMIN_PASSWORD),
+    isProduction,
   };
+}
+
+function validateProductionConfig(config: z.infer<typeof envSchema>) {
+  const missing = [
+    ["GITHUB_CLIENT_ID", config.GITHUB_CLIENT_ID],
+    ["GITHUB_CLIENT_SECRET", config.GITHUB_CLIENT_SECRET],
+    ["GITHUB_ADMIN_LOGINS", config.GITHUB_ADMIN_LOGINS.split(",").some((login) => login.trim()) ? config.GITHUB_ADMIN_LOGINS : ""],
+  ].filter(([, value]) => !value).map(([name]) => name);
+  if (missing.length) throw new Error(`Production GitHub authentication is incomplete. Set: ${missing.join(", ")}.`);
+  if (config.SESSION_SECRET === "development-only-change-this-secret") throw new Error("Production SESSION_SECRET must be replaced with a random secret.");
+  if (new URL(config.APP_ORIGIN).protocol !== "https:") throw new Error("Production APP_ORIGIN must use HTTPS.");
 }

@@ -22,6 +22,7 @@ const complete = projectInputSchema.parse({
   displayOrder: 0,
   accentColor: "lime",
   monitoringEnabled: true,
+  uptimeStartDate: "2026-01-01",
   healthUrl: "https://example.com",
   healthMethod: "GET",
   healthTimeoutMs: 10_000,

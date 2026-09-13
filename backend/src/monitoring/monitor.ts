@@ -68,6 +68,8 @@ export class MonitorService {
       const state = this.db.sqlite.prepare(`SELECT * FROM health_state WHERE project_id=?`).get(projectId) as Record<string, unknown> | undefined;
       const previousStatus = String(state?.status ?? "collecting");
       const previousFailures = Number(state?.consecutive_failures ?? 0);
+      const firstCheckedAt = state?.first_checked_at ? String(state.first_checked_at) : result.checkedAt;
+      const monitorIntervalMsAtStart = Number(state?.monitor_interval_ms_at_start ?? this.config.MONITOR_INTERVAL_MS);
       const failures = result.success ? 0 : previousFailures + 1;
       const status = result.success ? "online" : failures >= 3 ? "offline" : "degraded";
       let streak = state?.streak_started_at ? String(state.streak_started_at) : null;
@@ -75,12 +77,14 @@ export class MonitorService {
       if (!result.success && status === "offline") streak = null;
       this.db.sqlite.prepare(`INSERT INTO health_checks(id,project_id,checked_at,success,status_code,latency_ms,error_code) VALUES(?,?,?,?,?,?,?)`).run(randomUUID(), projectId, result.checkedAt, Number(result.success), result.statusCode, result.latencyMs, result.errorCode);
       this.db.sqlite.prepare(`
-        INSERT INTO health_state(project_id,status,consecutive_failures,last_checked_at,last_success_at,streak_started_at,latency_ms)
-        VALUES(?,?,?,?,?,?,?) ON CONFLICT(project_id) DO UPDATE SET status=excluded.status,
+        INSERT INTO health_state(project_id,status,consecutive_failures,last_checked_at,last_success_at,streak_started_at,latency_ms,first_checked_at,monitor_interval_ms_at_start)
+        VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(project_id) DO UPDATE SET status=excluded.status,
           consecutive_failures=excluded.consecutive_failures,last_checked_at=excluded.last_checked_at,
           last_success_at=COALESCE(excluded.last_success_at,health_state.last_success_at),
-          streak_started_at=excluded.streak_started_at,latency_ms=excluded.latency_ms
-      `).run(projectId, status, failures, result.checkedAt, result.success ? result.checkedAt : null, streak, result.latencyMs);
+          streak_started_at=excluded.streak_started_at,latency_ms=excluded.latency_ms,
+          first_checked_at=COALESCE(health_state.first_checked_at,excluded.first_checked_at),
+          monitor_interval_ms_at_start=COALESCE(health_state.monitor_interval_ms_at_start,excluded.monitor_interval_ms_at_start)
+      `).run(projectId, status, failures, result.checkedAt, result.success ? result.checkedAt : null, streak, result.latencyMs, firstCheckedAt, monitorIntervalMsAtStart);
       if (status === "offline" && previousStatus !== "offline") this.db.sqlite.prepare(`INSERT INTO incidents(id,project_id,started_at,trigger_error_code,trigger_status_code) VALUES(?,?,?,?,?)`).run(randomUUID(), projectId, result.checkedAt, result.errorCode ?? (result.statusCode == null ? "MONITOR_ERROR" : "HTTP_STATUS"), result.statusCode);
       if (result.success && previousStatus === "offline") this.db.sqlite.prepare(`UPDATE incidents SET ended_at=?,recovered_status_code=? WHERE project_id=? AND ended_at IS NULL`).run(result.checkedAt, result.statusCode, projectId);
       const day = result.checkedAt.slice(0, 10);

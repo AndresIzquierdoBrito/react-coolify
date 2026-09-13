@@ -30,12 +30,16 @@ export function authMiddleware(config: AppConfig, db: DatabaseContext) {
 export function configurePassport(config: AppConfig) {
   passport.serializeUser((user, done) => done(null, user));
   passport.deserializeUser((user: AdminUser, done) => done(null, user));
-  if (!config.GITHUB_CLIENT_ID || !config.GITHUB_CLIENT_SECRET) return;
+  const clientID = config.GITHUB_CLIENT_ID;
+  const clientSecret = config.GITHUB_CLIENT_SECRET;
+  if (!config.githubAuthConfigured || !clientID || !clientSecret) return;
   passport.use(new GitHubStrategy({
-    clientID: config.GITHUB_CLIENT_ID,
-    clientSecret: config.GITHUB_CLIENT_SECRET,
+    clientID,
+    clientSecret,
     callbackURL: `${config.APP_ORIGIN}/api/v1/auth/github/callback`,
     scope: ["read:user"],
+    // passport-github2's type definition predates passport-oauth2's boolean state option.
+    state: true as unknown as string,
   }, (_accessToken: string, _refreshToken: string, profile: Profile, done: (error: unknown, user?: AdminUser | false) => void) => {
     const login = profile.username?.toLowerCase() ?? "";
     if (!config.githubAdminLogins.has(login)) return done(null, false);
@@ -45,27 +49,29 @@ export function configurePassport(config: AppConfig) {
 
 export function createAuthRouter(config: AppConfig) {
   const router = Router();
-  const passwordLimiter = rateLimit({ windowMs: 15 * 60_000, limit: 8, skipSuccessfulRequests: true, standardHeaders: "draft-8", legacyHeaders: false });
   router.get("/session", (request, response) => {
     const user = request.user as AdminUser | undefined;
     const sessionData = request.session as session.Session & Partial<session.SessionData> & { csrfToken?: string };
     if (user && !sessionData.csrfToken) sessionData.csrfToken = randomBytes(24).toString("base64url");
-    const methods = { github: Boolean(config.GITHUB_CLIENT_ID && config.GITHUB_CLIENT_SECRET && config.githubAdminLogins.size), password: config.passwordAuthConfigured };
+    const methods = { github: config.githubAuthConfigured, password: config.passwordAuthConfigured };
     response.json({ authenticated: Boolean(user), configured: methods.github || methods.password, methods, user: user ?? null, csrfToken: user ? sessionData.csrfToken : null });
   });
-  router.post("/password", passwordLimiter, (request, response, next) => {
-    if (!config.passwordAuthConfigured) return response.status(503).json({ error: { code: "AUTH_NOT_CONFIGURED", message: "Username/password authentication is not configured." } });
-    const username = typeof request.body?.username === "string" ? request.body.username : "";
-    const password = typeof request.body?.password === "string" ? request.body.password : "";
-    if (!safeEqual(username, config.ADMIN_USERNAME) || !safeEqual(password, config.ADMIN_PASSWORD)) return response.status(401).json({ error: { code: "INVALID_CREDENTIALS", message: "The username or password is incorrect." } });
-    const admin: AdminUser = { id: `env:${config.ADMIN_USERNAME}`, login: config.ADMIN_USERNAME, displayName: config.ADMIN_USERNAME, avatarUrl: null };
-    request.session.regenerate((regenerateError) => {
-      if (regenerateError) return next(regenerateError);
-      request.login(admin, (loginError) => loginError ? next(loginError) : response.json({ user: admin }));
+  if (!config.isProduction) {
+    const passwordLimiter = rateLimit({ windowMs: 15 * 60_000, limit: 8, skipSuccessfulRequests: true, standardHeaders: "draft-8", legacyHeaders: false });
+    router.post("/password", passwordLimiter, (request, response, next) => {
+      if (!config.passwordAuthConfigured) return response.status(503).json({ error: { code: "AUTH_NOT_CONFIGURED", message: "Username/password authentication is not configured." } });
+      const username = typeof request.body?.username === "string" ? request.body.username : "";
+      const password = typeof request.body?.password === "string" ? request.body.password : "";
+      if (!safeEqual(username, config.ADMIN_USERNAME) || !safeEqual(password, config.ADMIN_PASSWORD)) return response.status(401).json({ error: { code: "INVALID_CREDENTIALS", message: "The username or password is incorrect." } });
+      const admin: AdminUser = { id: `env:${config.ADMIN_USERNAME}`, login: config.ADMIN_USERNAME, displayName: config.ADMIN_USERNAME, avatarUrl: null };
+      request.session.regenerate((regenerateError) => {
+        if (regenerateError) return next(regenerateError);
+        request.login(admin, (loginError) => loginError ? next(loginError) : response.json({ user: admin }));
+      });
     });
-  });
+  }
   router.get("/github", (request, response, next) => {
-    if (!config.GITHUB_CLIENT_ID || !config.GITHUB_CLIENT_SECRET) return response.status(503).json({ error: { code: "AUTH_NOT_CONFIGURED", message: "GitHub OAuth is not configured." } });
+    if (!config.githubAuthConfigured) return response.status(503).json({ error: { code: "AUTH_NOT_CONFIGURED", message: "GitHub OAuth is not configured." } });
     passport.authenticate("github", { session: true })(request, response, next);
   });
   router.get("/github/callback", passport.authenticate("github", { failureRedirect: "/admin?auth=denied" }), (_request, response) => response.redirect("/admin"));

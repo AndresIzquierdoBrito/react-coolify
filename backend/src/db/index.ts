@@ -45,6 +45,7 @@ function migrate(db: Database.Database) {
       display_order INTEGER NOT NULL DEFAULT 0, accent_color TEXT NOT NULL DEFAULT 'lime', monitoring_enabled INTEGER NOT NULL DEFAULT 1,
       health_url TEXT, health_method TEXT NOT NULL DEFAULT 'GET', health_timeout_ms INTEGER NOT NULL DEFAULT 10000,
       expected_status_min INTEGER NOT NULL DEFAULT 200, expected_status_max INTEGER NOT NULL DEFAULT 399,
+      uptime_start_date TEXT,
       created_at TEXT NOT NULL, updated_at TEXT NOT NULL
     );
     CREATE TABLE IF NOT EXISTS technologies (
@@ -70,7 +71,8 @@ function migrate(db: Database.Database) {
     CREATE TABLE IF NOT EXISTS health_state (
       project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
       status TEXT NOT NULL DEFAULT 'collecting', consecutive_failures INTEGER NOT NULL DEFAULT 0,
-      last_checked_at TEXT, last_success_at TEXT, streak_started_at TEXT, latency_ms INTEGER
+      last_checked_at TEXT, last_success_at TEXT, streak_started_at TEXT, latency_ms INTEGER,
+      first_checked_at TEXT, monitor_interval_ms_at_start INTEGER
     );
     CREATE TABLE IF NOT EXISTS health_checks (
       id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -110,9 +112,27 @@ function migrate(db: Database.Database) {
   ensureColumn(db, "projects", "maintenance_message_en", "TEXT NOT NULL DEFAULT ''");
   ensureColumn(db, "projects", "maintenance_message_es", "TEXT NOT NULL DEFAULT ''");
   ensureColumn(db, "projects", "operational_notice_type", "TEXT NOT NULL DEFAULT 'none'");
+  ensureColumn(db, "projects", "uptime_start_date", "TEXT");
   ensureColumn(db, "incidents", "trigger_error_code", "TEXT");
   ensureColumn(db, "incidents", "trigger_status_code", "INTEGER");
   ensureColumn(db, "incidents", "recovered_status_code", "INTEGER");
+  ensureColumn(db, "health_state", "first_checked_at", "TEXT");
+  ensureColumn(db, "health_state", "monitor_interval_ms_at_start", "INTEGER");
+  db.exec(`
+    UPDATE projects
+    SET uptime_start_date = COALESCE(
+      (SELECT substr(created_at_source, 1, 10) FROM coolify_resources WHERE coolify_resources.id = projects.coolify_resource_id AND created_at_source IS NOT NULL AND length(created_at_source) >= 10),
+      substr(created_at, 1, 10),
+      '1970-01-01'
+    )
+    WHERE uptime_start_date IS NULL OR uptime_start_date = '';
+    UPDATE health_state
+    SET first_checked_at = COALESCE(
+      (SELECT MIN(checked_at) FROM health_checks WHERE health_checks.project_id = health_state.project_id),
+      (SELECT MIN(day) || 'T00:00:00.000Z' FROM daily_metrics WHERE daily_metrics.project_id = health_state.project_id)
+    )
+    WHERE first_checked_at IS NULL;
+  `);
 }
 
 function ensureColumn(db: Database.Database, table: string, column: string, definition: string) {

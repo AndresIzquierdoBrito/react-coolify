@@ -65,6 +65,7 @@ export function applyPreviewInput(project: ProjectDetail, input: ProjectInput, l
     featured: input.featured,
     displayOrder: input.displayOrder,
     accentColor: input.accentColor,
+    health: { ...project.health, uptimeStartDate: input.uptimeStartDate },
     cover: project.cover ? { ...project.cover, alt: coverAlt || project.cover.alt } : null,
   };
 }

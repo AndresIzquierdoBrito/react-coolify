@@ -17,7 +17,7 @@ export function createApp(config: AppConfig, db: DatabaseContext) {
   const app = express();
   const logger = pino({ level: config.LOG_LEVEL });
   const coolify = new CoolifyClient(config);
-  const projects = new ProjectRepository(db);
+  const projects = new ProjectRepository(db, config.MONITOR_INTERVAL_MS);
   const media = new MediaService(db, config);
   configurePassport(config);
   app.set("trust proxy", 1);

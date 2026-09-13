@@ -63,6 +63,7 @@ export const projects = sqliteTable(
     healthTimeoutMs: integer("health_timeout_ms").notNull().default(10_000),
     expectedStatusMin: integer("expected_status_min").notNull().default(200),
     expectedStatusMax: integer("expected_status_max").notNull().default(399),
+    uptimeStartDate: text("uptime_start_date"),
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),
   },
@@ -114,6 +115,8 @@ export const healthState = sqliteTable("health_state", {
   lastSuccessAt: text("last_success_at"),
   streakStartedAt: text("streak_started_at"),
   latencyMs: integer("latency_ms"),
+  firstCheckedAt: text("first_checked_at"),
+  monitorIntervalMsAtStart: integer("monitor_interval_ms_at_start"),
 });
 
 export const healthChecks = sqliteTable("health_checks", {

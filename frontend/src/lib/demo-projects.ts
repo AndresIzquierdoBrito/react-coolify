@@ -65,7 +65,7 @@ function makeSummary(index: number, copy: { title: string; summary: string }, re
     repositoryUrl: index === 0 ? "https://github.com" : null,
     caseStudyUrl: index === 1 ? "https://example.com" : null,
     cover: null,
-    health: { status, uptime30d, streakStartedAt: streakDays == null ? null : "2026-07-01T00:00:00.000Z", streakDays, latencyMs, lastCheckedAt: "2026-08-16T14:30:00.000Z", daily: history, activeIncident: index === 2 ? { startedAt: "2026-08-16T13:12:00.000Z", trigger: "HTTP_STATUS", statusCode: 503 } : null },
+    health: { status, uptime30d, uptimeStartDate: "2026-07-01", measurementStartedAt: "2026-07-01T00:00:00.000Z", assumedUptime: false, streakStartedAt: streakDays == null ? null : "2026-07-01T00:00:00.000Z", streakDays, latencyMs, lastCheckedAt: "2026-08-16T14:30:00.000Z", daily: history, activeIncident: index === 2 ? { startedAt: "2026-08-16T13:12:00.000Z", trigger: "HTTP_STATUS", statusCode: 503 } : null },
     createdAt: new Date(Date.UTC(2026, 6, 12 + index)).toISOString(),
     featured,
     displayOrder: index,

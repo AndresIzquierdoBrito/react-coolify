@@ -28,6 +28,10 @@ export const projectHealthSchema = z.enum([
   "unknown",
 ]);
 export const operationalNoticeTypeSchema = z.enum(["none", "maintenance", "restart", "update"]);
+export const calendarDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => {
+  const date = new Date(`${value}T00:00:00.000Z`);
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}, "Enter a valid calendar date.");
 
 export const technologySchema = z.object({
   id: z.string(),
@@ -57,6 +61,9 @@ export const projectSummarySchema = z.object({
   health: z.object({
     status: projectHealthSchema,
     uptime30d: z.number().min(0).max(100).nullable(),
+    uptimeStartDate: calendarDateSchema,
+    measurementStartedAt: z.string().nullable(),
+    assumedUptime: z.boolean(),
     streakStartedAt: z.string().nullable(),
     streakDays: z.number().nullable(),
     latencyMs: z.number().nullable(),
@@ -148,6 +155,7 @@ export const projectInputSchema = z.object({
   displayOrder: z.number().int().min(0),
   accentColor: projectAccentSchema,
   monitoringEnabled: z.boolean(),
+  uptimeStartDate: calendarDateSchema,
   healthUrl: optionalUrl,
   healthMethod: z.enum(["GET", "HEAD"]),
   healthTimeoutMs: z.number().int().min(1000).max(30000),

@@ -27,6 +27,7 @@ describe("admin preview projection", () => {
       displayOrder: 7,
       accentColor: "mint",
       monitoringEnabled: true,
+      uptimeStartDate: "2026-07-01",
       healthUrl: "https://preview.example.com/health",
       healthMethod: "GET",
       healthTimeoutMs: 10_000,

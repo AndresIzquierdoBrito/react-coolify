@@ -44,4 +44,30 @@ describe("temporary username/password authentication", () => {
     expect(authenticated.body.user.login).toBe("temporary-owner");
     expect(authenticated.body.csrfToken).toEqual(expect.any(String));
   });
+
+  it("exposes only GitHub authentication in production", async () => {
+    const config = loadConfig({
+      NODE_ENV: "production",
+      DATABASE_PATH: ":memory:",
+      UPLOADS_PATH: tempDirectory,
+      APP_ORIGIN: "https://projects.izbri.com",
+      SESSION_SECRET: "test-production-session-secret-with-length",
+      GITHUB_CLIENT_ID: "client-id",
+      GITHUB_CLIENT_SECRET: "client-secret",
+      GITHUB_ADMIN_LOGINS: "AndresIzquierdoBrito",
+      ADMIN_USERNAME: "stale-user",
+      ADMIN_PASSWORD: "stale-password",
+      LOG_LEVEL: "silent",
+    });
+    db = createDatabase(":memory:");
+    const { app } = createApp(config, db);
+    const agent = supertest.agent(app);
+
+    await agent.get("/api/v1/auth/session").expect(200).expect(({ body }) => {
+      expect(body).toMatchObject({ authenticated: false, configured: true, methods: { github: true, password: false } });
+    });
+    await agent.post("/api/v1/auth/password").send({ username: "stale-user", password: "stale-password" }).expect(404);
+    const redirect = await agent.get("/api/v1/auth/github").expect(302);
+    expect(new URL(redirect.headers.location).searchParams.get("state")).toBeTruthy();
+  });
 });
