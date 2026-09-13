@@ -8,9 +8,14 @@ export interface EncryptedToken {
 }
 
 export class CredentialsKeyError extends Error {
-  readonly code = "COOLIFY_CREDENTIALS_KEY_MISSING";
+  readonly code: "COOLIFY_CREDENTIALS_KEY_MISSING" | "COOLIFY_CREDENTIALS_KEY_INVALID";
 
-  constructor() { super("Managed Coolify credentials are unavailable because COOLIFY_CREDENTIALS_KEY is not configured."); }
+  constructor(code: "COOLIFY_CREDENTIALS_KEY_MISSING" | "COOLIFY_CREDENTIALS_KEY_INVALID") {
+    super(code === "COOLIFY_CREDENTIALS_KEY_MISSING"
+      ? "Managed Coolify credentials are unavailable because COOLIFY_CREDENTIALS_KEY is not configured."
+      : "COOLIFY_CREDENTIALS_KEY must be a base64-encoded 32-byte key.");
+    this.code = code;
+  }
 }
 
 export function encryptToken(token: string, config: AppConfig): EncryptedToken {
@@ -34,8 +39,8 @@ export function decryptToken(value: EncryptedToken, config: AppConfig) {
 
 function credentialsKey(config: AppConfig) {
   const raw = config.coolifyCredentialsKey?.trim();
-  if (!raw) throw new CredentialsKeyError();
+  if (!raw) throw new CredentialsKeyError("COOLIFY_CREDENTIALS_KEY_MISSING");
   const decoded = Buffer.from(raw, "base64");
-  if (decoded.length !== 32) throw new Error("COOLIFY_CREDENTIALS_KEY must be a base64-encoded 32-byte key.");
+  if (decoded.length !== 32) throw new CredentialsKeyError("COOLIFY_CREDENTIALS_KEY_INVALID");
   return decoded;
 }

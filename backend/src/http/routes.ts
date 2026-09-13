@@ -137,10 +137,12 @@ export function errorHandler(error: unknown, _request: Request, response: Respon
   if (error instanceof CoolifySyncError) return response.status(error.status).json({ error: { code: error.code, message: error.message, requestId: response.locals.requestId, details: error.warnings } });
   const isZod = error && typeof error === "object" && "issues" in error;
   const message = error instanceof Error ? error.message : "Unexpected server error";
-  const known = ["RESOURCE_NOT_FOUND", "RESOURCE_ALREADY_IMPORTED", "INVALID_STATUS_RANGE", "INVALID_UPTIME_START_DATE", "INCOMPLETE_TRANSLATIONS", "INCOMPLETE_MAINTENANCE_TRANSLATIONS", "COVER_REQUIRED", "PROJECT_NOT_FOUND", "UNSUPPORTED_IMAGE", "GALLERY_ALT_REQUIRED", "GALLERY_LIMIT", "GALLERY_IMAGE_NOT_FOUND", "INVALID_GALLERY_ORDER", "COOLIFY_TEAM_NOT_FOUND", "COOLIFY_TEAM_CREDENTIALS_UNAVAILABLE", "COOLIFY_TEAM_TOKEN_REQUIRED", "COOLIFY_TEAM_NAME_TAKEN", "COOLIFY_TEAM_NAME_INVALID", "COOLIFY_TEAM_URL_INVALID", "COOLIFY_TEAM_URL_REQUIRED", "COOLIFY_ENV_TEAM_MANAGED", "COOLIFY_CREDENTIALS_KEY_MISSING"].includes(message);
-  const status = isZod ? 400 : known ? 422 : 500;
+  const errorCode = error && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : undefined;
+  const knownCodes = ["RESOURCE_NOT_FOUND", "RESOURCE_ALREADY_IMPORTED", "INVALID_STATUS_RANGE", "INVALID_UPTIME_START_DATE", "INCOMPLETE_TRANSLATIONS", "INCOMPLETE_MAINTENANCE_TRANSLATIONS", "COVER_REQUIRED", "PROJECT_NOT_FOUND", "UNSUPPORTED_IMAGE", "GALLERY_ALT_REQUIRED", "GALLERY_LIMIT", "GALLERY_IMAGE_NOT_FOUND", "INVALID_GALLERY_ORDER", "COOLIFY_TEAM_NOT_FOUND", "COOLIFY_TEAM_CREDENTIALS_UNAVAILABLE", "COOLIFY_TEAM_TOKEN_REQUIRED", "COOLIFY_TEAM_NAME_TAKEN", "COOLIFY_TEAM_NAME_INVALID", "COOLIFY_TEAM_URL_INVALID", "COOLIFY_TEAM_URL_REQUIRED", "COOLIFY_ENV_TEAM_MANAGED", "COOLIFY_CREDENTIALS_KEY_MISSING", "COOLIFY_CREDENTIALS_KEY_INVALID"];
+  const knownCode = knownCodes.includes(errorCode ?? "") ? errorCode : knownCodes.includes(message) ? message : undefined;
+  const status = isZod ? 400 : knownCode ? 422 : 500;
   const projectDetails = error instanceof ProjectValidationError ? error.fields.map((field) => ({ path: [field], message: "Required before publishing." })) : undefined;
-  response.status(status).json({ error: { code: isZod ? "VALIDATION_ERROR" : known ? message : "INTERNAL_ERROR", message: isZod ? "The submitted data is invalid." : known ? humanize(message) : "An unexpected error occurred.", requestId: response.locals.requestId, details: isZod ? (error as { issues: unknown }).issues : projectDetails } });
+  response.status(status).json({ error: { code: isZod ? "VALIDATION_ERROR" : knownCode ?? "INTERNAL_ERROR", message: isZod ? "The submitted data is invalid." : knownCode ? humanize(knownCode) : "An unexpected error occurred.", requestId: response.locals.requestId, details: isZod ? (error as { issues: unknown }).issues : projectDetails } });
 }
 
 function humanize(code: string) { return code.toLowerCase().replaceAll("_", " ").replace(/^./, (letter) => letter.toUpperCase()) + "."; }
