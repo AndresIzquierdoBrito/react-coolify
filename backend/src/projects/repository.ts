@@ -11,24 +11,26 @@ export class ProjectValidationError extends Error {
 export class ProjectRepository {
   constructor(private readonly db: DatabaseContext, private readonly monitorIntervalMs = 60_000, private readonly now = () => Date.now()) {}
 
-  listPublic(locale: Locale, filters: { status?: string; technology?: string; resourceType?: string; sort?: string }) {
+  listPublic(locale: Locale, filters: { status?: string; technology?: string; resourceType?: string; team?: string; sort?: string }) {
     const rows = this.db.sqlite.prepare(`
       SELECT p.*, cr.resource_type, cr.created_at_source, cr.updated_at_source, cr.status AS coolify_status,
         cr.source_type, cr.source_branch, cr.commit_sha, cr.deployment_in_progress,cr.last_successful_deployment_at,cr.synced_at, hs.status, hs.streak_started_at, hs.first_checked_at, hs.monitor_interval_ms_at_start,
         ss.enabled AS sentinel_enabled, ss.metrics_enabled AS sentinel_metrics_enabled,
         ss.refresh_rate_seconds AS sentinel_refresh_rate_seconds, ss.history_days AS sentinel_history_days,
         ss.push_interval_seconds AS sentinel_push_interval_seconds, ss.last_reported_at AS sentinel_last_reported_at,
-        hs.latency_ms, hs.last_checked_at, m.large_path, m.small_path, m.alt_en, m.alt_es
+        cr.team_id, ct.name AS team_name, hs.latency_ms, hs.last_checked_at, m.large_path, m.small_path, m.alt_en, m.alt_es
       FROM projects p
       JOIN coolify_resources cr ON cr.id=p.coolify_resource_id
+      JOIN coolify_teams ct ON ct.id=cr.team_id AND ct.enabled=1
       LEFT JOIN health_state hs ON hs.project_id=p.id
       LEFT JOIN media m ON m.project_id=p.id
-      LEFT JOIN sentinel_servers ss ON ss.server_uuid=cr.server_uuid
+      LEFT JOIN sentinel_servers ss ON ss.team_id=cr.team_id AND ss.server_uuid=cr.server_uuid
       WHERE p.published=1
     `).all() as Row[];
     let projects = rows.map((row) => this.toSummary(row, locale));
     if (filters.status) projects = projects.filter((project) => project.health.status === filters.status);
     if (filters.resourceType) projects = projects.filter((project) => project.resourceType === filters.resourceType);
+    if (filters.team) projects = projects.filter((project) => project.team.id === filters.team);
     if (filters.technology) projects = projects.filter((project) => project.technologies.some((tech) => tech.slug === filters.technology));
     const sort = filters.sort ?? "curated";
     projects.sort((a, b) => {
@@ -47,10 +49,10 @@ export class ProjectRepository {
         ss.enabled AS sentinel_enabled, ss.metrics_enabled AS sentinel_metrics_enabled,
         ss.refresh_rate_seconds AS sentinel_refresh_rate_seconds, ss.history_days AS sentinel_history_days,
         ss.push_interval_seconds AS sentinel_push_interval_seconds, ss.last_reported_at AS sentinel_last_reported_at,
-        hs.latency_ms, hs.last_checked_at, m.large_path, m.small_path, m.alt_en, m.alt_es
-      FROM projects p JOIN coolify_resources cr ON cr.id=p.coolify_resource_id
+        cr.team_id, ct.name AS team_name, hs.latency_ms, hs.last_checked_at, m.large_path, m.small_path, m.alt_en, m.alt_es
+      FROM projects p JOIN coolify_resources cr ON cr.id=p.coolify_resource_id JOIN coolify_teams ct ON ct.id=cr.team_id AND ct.enabled=1
       LEFT JOIN health_state hs ON hs.project_id=p.id LEFT JOIN media m ON m.project_id=p.id
-      LEFT JOIN sentinel_servers ss ON ss.server_uuid=cr.server_uuid
+      LEFT JOIN sentinel_servers ss ON ss.team_id=cr.team_id AND ss.server_uuid=cr.server_uuid
       WHERE p.slug=? AND p.published=1
     `).get(slug) as Row | undefined;
     return row ? this.toDetail(row, locale) : null;
@@ -64,25 +66,34 @@ export class ProjectRepository {
         ss.enabled AS sentinel_enabled,ss.metrics_enabled AS sentinel_metrics_enabled,
         ss.refresh_rate_seconds AS sentinel_refresh_rate_seconds,ss.history_days AS sentinel_history_days,
         ss.push_interval_seconds AS sentinel_push_interval_seconds,ss.last_reported_at AS sentinel_last_reported_at,
-        m.large_path,m.small_path,m.alt_en,m.alt_es
-      FROM projects p JOIN coolify_resources cr ON cr.id=p.coolify_resource_id
+        cr.team_id, ct.name AS team_name, m.large_path,m.small_path,m.alt_en,m.alt_es
+      FROM projects p JOIN coolify_resources cr ON cr.id=p.coolify_resource_id JOIN coolify_teams ct ON ct.id=cr.team_id
       LEFT JOIN health_state hs ON hs.project_id=p.id LEFT JOIN media m ON m.project_id=p.id
-      LEFT JOIN sentinel_servers ss ON ss.server_uuid=cr.server_uuid WHERE p.id=?
+      LEFT JOIN sentinel_servers ss ON ss.team_id=cr.team_id AND ss.server_uuid=cr.server_uuid WHERE p.id=?
     `).get(id) as Row | undefined;
     return row ? this.toDetail(row, locale) : null;
   }
 
   getAdminProjects() {
     return this.db.sqlite.prepare(`
-      SELECT p.*, cr.name AS coolify_name, cr.resource_type, cr.resource_uuid,
+      SELECT p.*, cr.name AS coolify_name, cr.resource_type, cr.resource_uuid, cr.team_id, ct.name AS team_name,
         m.large_path, m.small_path, m.alt_en, m.alt_es
-      FROM projects p JOIN coolify_resources cr ON cr.id=p.coolify_resource_id
+      FROM projects p JOIN coolify_resources cr ON cr.id=p.coolify_resource_id JOIN coolify_teams ct ON ct.id=cr.team_id
       LEFT JOIN media m ON m.project_id=p.id ORDER BY p.display_order, p.created_at
     `).all().map((value) => { const row = value as Row; return { ...row, technologies: this.technologiesFor(String(row.id)), gallery: this.galleryForAdmin(String(row.id)) }; });
   }
 
-  import(resourceType: string, resourceUuid: string, liveUrl: string) {
-    const resource = this.db.sqlite.prepare(`SELECT * FROM coolify_resources WHERE resource_type=? AND resource_uuid=?`).get(resourceType, resourceUuid) as Row | undefined;
+  import(resourceType: string, resourceUuid: string, liveUrl: string, teamId = "legacy-default") {
+    const resource = this.db.sqlite.prepare(`SELECT * FROM coolify_resources WHERE team_id=? AND resource_type=? AND resource_uuid=?`).get(teamId, resourceType, resourceUuid) as Row | undefined;
+    return this.importResource(resource, liveUrl);
+  }
+
+  importById(resourceId: string, liveUrl: string) {
+    const resource = this.db.sqlite.prepare(`SELECT * FROM coolify_resources WHERE id=?`).get(resourceId) as Row | undefined;
+    return this.importResource(resource, liveUrl);
+  }
+
+  private importResource(resource: Row | undefined, liveUrl: string) {
     if (!resource) throw new Error("RESOURCE_NOT_FOUND");
     const existing = this.db.sqlite.prepare(`SELECT id FROM projects WHERE coolify_resource_id=?`).get(resource.id);
     if (existing) throw new Error("RESOURCE_ALREADY_IMPORTED");
@@ -137,8 +148,9 @@ export class ProjectRepository {
 
   site(locale: Locale) {
     const settings = this.db.sqlite.prepare(`SELECT * FROM site_settings WHERE id=1`).get() as Row;
-    const technologies = this.db.sqlite.prepare(`SELECT DISTINCT t.id,t.name,t.slug FROM technologies t JOIN project_technologies pt ON pt.technology_id=t.id JOIN projects p ON p.id=pt.project_id WHERE p.published=1 ORDER BY t.name`).all();
-    return { title: settings.title, githubUrl: settings.github_url ?? null, contactUrl: settings.contact_url ?? null, locale, technologies, resourceTypes: ["application", "service"], statuses: ["online", "degraded", "offline", "collecting", "unknown"] };
+    const technologies = this.db.sqlite.prepare(`SELECT DISTINCT t.id,t.name,t.slug FROM technologies t JOIN project_technologies pt ON pt.technology_id=t.id JOIN projects p ON p.id=pt.project_id JOIN coolify_resources cr ON cr.id=p.coolify_resource_id JOIN coolify_teams ct ON ct.id=cr.team_id WHERE p.published=1 AND ct.enabled=1 ORDER BY t.name`).all();
+    const teams = this.db.sqlite.prepare(`SELECT DISTINCT ct.id,ct.name FROM coolify_teams ct JOIN coolify_resources cr ON cr.team_id=ct.id JOIN projects p ON p.coolify_resource_id=cr.id WHERE p.published=1 AND ct.enabled=1 ORDER BY ct.name COLLATE NOCASE`).all();
+    return { title: settings.title, githubUrl: settings.github_url ?? null, contactUrl: settings.contact_url ?? null, locale, technologies, teams, resourceTypes: ["application", "service"], statuses: ["online", "degraded", "offline", "collecting", "unknown"] };
   }
 
   private toSummary(row: Row, locale: Locale): ProjectSummary {
@@ -158,6 +170,7 @@ export class ProjectRepository {
       maintenanceMessage: String(row.operational_notice_type) === "none" ? null : String(row[locale === "es" ? "maintenance_message_es" : "maintenance_message_en"] ?? "").trim() || null,
       operationalNoticeType: (["maintenance", "restart", "update"].includes(String(row.operational_notice_type)) ? String(row.operational_notice_type) : "none") as ProjectSummary["operationalNoticeType"],
       resourceType: String(row.resource_type) as "application" | "service",
+      team: { id: String(row.team_id ?? "legacy-default"), name: String(row.team_name ?? "Default team") },
       technologies: this.technologiesFor(projectId),
       liveUrl: String(row.live_url),
       repositoryUrl: row.repository_url ? String(row.repository_url) : null,

@@ -2,10 +2,12 @@ import { randomUUID } from "node:crypto";
 import type { NextFunction, Request, Response } from "express";
 import { Router } from "express";
 import multer from "multer";
-import { importProjectSchema, localeSchema, projectInputSchema, reorderProjectsSchema } from "@izbri/contracts";
+import { coolifyTeamInputSchema, coolifyTeamUpdateSchema, importProjectSchema, localeSchema, projectInputSchema, reorderProjectsSchema } from "@izbri/contracts";
 import type { DatabaseContext } from "../db/index.js";
 import type { CoolifyClient } from "../coolify/client.js";
-import { CoolifySyncError, persistCoolifyResources, persistSentinelServers } from "../coolify/client.js";
+import { CoolifySyncError } from "../coolify/client.js";
+import { CoolifyTeamRepository } from "../coolify/teams.js";
+import { CoolifySyncOrchestrator, aggregateWarnings } from "../coolify/sync.js";
 import { requireAuth, requireCsrf } from "../auth/index.js";
 import { ProjectValidationError, type ProjectRepository } from "../projects/repository.js";
 import type { MediaService } from "../media/service.js";
@@ -37,8 +39,8 @@ export function createPublicRouter(projects: ProjectRepository) {
   return router;
 }
 
-export function createAdminRouter(dependencies: { db: DatabaseContext; projects: ProjectRepository; coolify: CoolifyClient; media: MediaService }) {
-  const { db, projects, coolify, media } = dependencies;
+export function createAdminRouter(dependencies: { db: DatabaseContext; projects: ProjectRepository; coolify: CoolifyClient; teams: CoolifyTeamRepository; sync: CoolifySyncOrchestrator; media: MediaService }) {
+  const { db, projects, coolify, teams, sync, media } = dependencies;
   const router = Router();
   const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024, files: 1 } });
   router.use(requireAuth);
@@ -49,17 +51,29 @@ export function createAdminRouter(dependencies: { db: DatabaseContext; projects:
     if (!project) return notFound(response, "PROJECT_NOT_FOUND", "Project not found.");
     response.set("Cache-Control", "private, no-store").json({ project });
   });
-  router.get("/coolify/resources", (_request, response) => response.json({ configured: coolify.configured, resources: catalog(db), sentinel: sentinelSummary(db) }));
+  router.get("/coolify/resources", (_request, response) => { const configuredTeams = teams.list(); return response.json({ configured: configuredTeams.some((team) => team.tokenConfigured), teams: configuredTeams, resources: catalog(db), sentinel: sentinelSummary(db) }); });
+  router.get("/coolify/teams", (_request, response) => response.json({ teams: teams.list() }));
+  router.post("/coolify/teams", requireCsrf, (request, response) => {
+    const input = coolifyTeamInputSchema.parse(request.body);
+    response.status(201).json({ team: teams.create(input) });
+  });
+  router.put("/coolify/teams/:id", requireCsrf, (request, response) => {
+    const input = coolifyTeamUpdateSchema.parse(request.body);
+    response.json({ team: teams.update(String(request.params.id), input) });
+  });
+  router.post("/coolify/teams/:id/sync", requireCsrf, asyncHandler(async (request, response) => {
+    const outcome = await sync.syncTeam(String(request.params.id));
+    response.json({ ...outcome, resources: catalog(db), warnings: outcome.warnings });
+  }));
   router.post("/coolify/sync", requireCsrf, asyncHandler(async (_request, response) => {
-    const { resources, warnings } = await coolify.listResources();
-    persistCoolifyResources(db, resources);
-    const sentinel = await coolify.listSentinelStatus();
-    persistSentinelServers(db, sentinel.servers);
-    response.json({ synced: resources.length, sentinelServers: sentinel.servers.length, sentinel: sentinelSummary(db), resources: catalog(db), warnings: [...warnings, ...sentinel.warnings] });
+    const outcomes = await sync.syncAll();
+    response.json({ synced: outcomes.reduce((sum, item) => sum + item.resources, 0), sentinelServers: sentinelSummary(db).serverCount, teams: teams.list(), sentinel: sentinelSummary(db), resources: catalog(db), outcomes, warnings: aggregateWarnings(outcomes) });
   }));
   router.post("/projects/import", requireCsrf, (request, response) => {
     const input = importProjectSchema.parse(request.body);
-    const id = projects.import(input.resourceType, input.resourceUuid, input.liveUrl);
+    const id = input.resourceId
+      ? projects.importById(input.resourceId, input.liveUrl)
+      : projects.import(input.resourceType!, input.resourceUuid!, input.liveUrl, input.teamId ?? "legacy-default");
     response.status(201).json({ id });
   });
   router.put("/projects/reorder", requireCsrf, (request, response) => {
@@ -99,10 +113,11 @@ function catalog(db: DatabaseContext) {
   return db.sqlite.prepare(`
     SELECT cr.id,cr.resource_type AS resourceType,cr.resource_uuid AS resourceUuid,cr.name,cr.description,
       cr.status,cr.source_type AS sourceType,cr.suggested_urls_json AS suggestedUrlsJson,cr.synced_at AS syncedAt,
+      cr.team_id AS teamId,ct.name AS teamName,
       CASE WHEN p.id IS NULL THEN 0 ELSE 1 END AS imported
-    FROM coolify_resources cr LEFT JOIN projects p ON p.coolify_resource_id=cr.id
+    FROM coolify_resources cr JOIN coolify_teams ct ON ct.id=cr.team_id LEFT JOIN projects p ON p.coolify_resource_id=cr.id
     ORDER BY cr.resource_type,cr.name
-  `).all().map((row) => { const item = row as Record<string, unknown>; return { ...item, imported: Boolean(item.imported), suggestedUrls: JSON.parse(String(item.suggestedUrlsJson)), suggestedUrlsJson: undefined }; });
+  `).all().map((row) => { const item = row as Record<string, unknown>; return { ...item, team: { id: String(item.teamId), name: String(item.teamName) }, imported: Boolean(item.imported), suggestedUrls: JSON.parse(String(item.suggestedUrlsJson)), suggestedUrlsJson: undefined }; });
 }
 
 function sentinelSummary(db: DatabaseContext) {
@@ -112,7 +127,7 @@ function sentinelSummary(db: DatabaseContext) {
 
 function stringFilters(request: Request) {
   const get = (name: string) => typeof request.query[name] === "string" ? request.query[name] as string : undefined;
-  return { status: get("status"), technology: get("technology"), resourceType: get("resourceType"), sort: get("sort") };
+  return { status: get("status"), technology: get("technology"), resourceType: get("resourceType"), team: get("team"), sort: get("sort") };
 }
 
 function notFound(response: Response, code: string, message: string) { return response.status(404).json({ error: { code, message, requestId: response.locals.requestId } }); }
@@ -122,7 +137,7 @@ export function errorHandler(error: unknown, _request: Request, response: Respon
   if (error instanceof CoolifySyncError) return response.status(error.status).json({ error: { code: error.code, message: error.message, requestId: response.locals.requestId, details: error.warnings } });
   const isZod = error && typeof error === "object" && "issues" in error;
   const message = error instanceof Error ? error.message : "Unexpected server error";
-  const known = ["RESOURCE_NOT_FOUND", "RESOURCE_ALREADY_IMPORTED", "INVALID_STATUS_RANGE", "INVALID_UPTIME_START_DATE", "INCOMPLETE_TRANSLATIONS", "INCOMPLETE_MAINTENANCE_TRANSLATIONS", "COVER_REQUIRED", "PROJECT_NOT_FOUND", "UNSUPPORTED_IMAGE", "GALLERY_ALT_REQUIRED", "GALLERY_LIMIT", "GALLERY_IMAGE_NOT_FOUND", "INVALID_GALLERY_ORDER"].includes(message);
+  const known = ["RESOURCE_NOT_FOUND", "RESOURCE_ALREADY_IMPORTED", "INVALID_STATUS_RANGE", "INVALID_UPTIME_START_DATE", "INCOMPLETE_TRANSLATIONS", "INCOMPLETE_MAINTENANCE_TRANSLATIONS", "COVER_REQUIRED", "PROJECT_NOT_FOUND", "UNSUPPORTED_IMAGE", "GALLERY_ALT_REQUIRED", "GALLERY_LIMIT", "GALLERY_IMAGE_NOT_FOUND", "INVALID_GALLERY_ORDER", "COOLIFY_TEAM_NOT_FOUND", "COOLIFY_TEAM_CREDENTIALS_UNAVAILABLE", "COOLIFY_TEAM_TOKEN_REQUIRED", "COOLIFY_TEAM_NAME_TAKEN", "COOLIFY_TEAM_NAME_INVALID", "COOLIFY_TEAM_URL_INVALID", "COOLIFY_TEAM_URL_REQUIRED", "COOLIFY_ENV_TEAM_MANAGED", "COOLIFY_CREDENTIALS_KEY_MISSING"].includes(message);
   const status = isZod ? 400 : known ? 422 : 500;
   const projectDetails = error instanceof ProjectValidationError ? error.fields.map((field) => ({ path: [field], message: "Required before publishing." })) : undefined;
   response.status(status).json({ error: { code: isZod ? "VALIDATION_ERROR" : known ? message : "INTERNAL_ERROR", message: isZod ? "The submitted data is invalid." : known ? humanize(message) : "An unexpected error occurred.", requestId: response.locals.requestId, details: isZod ? (error as { issues: unknown }).issues : projectDetails } });
