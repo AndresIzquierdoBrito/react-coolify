@@ -6,7 +6,7 @@ export async function generateMetadata({ params }: { params: Promise<{ locale: s
   const { locale } = await params;
   if (!["en", "es"].includes(locale)) return {};
   const english = locale === "en";
-  return { title: english ? "Live projects" : "Proyectos en vivo", description: english ? "Explore Izbri's live applications and their independently measured reliability." : "Explora las aplicaciones en vivo de Izbri y su fiabilidad medida de forma independiente.", alternates: { canonical: `/${locale}`, languages: { en: "/en", es: "/es" } }, openGraph: { locale: english ? "en_US" : "es_ES", type: "website" } };
+  return { title: english ? "Live projects" : "Proyectos en vivo", description: english ? "Explore Izbri's live applications and their independently measured reliability." : "Explora las aplicaciones en vivo de Izbri y su fiabilidad medida de forma independiente.", alternates: { canonical: `/${locale}`, languages: { en: "/en", es: "/es" } }, openGraph: { locale: english ? "en_US" : "es_ES", type: "website", images: [{ url: "/izbri-projects-icon.png", width: 1100, height: 1142, alt: "Izbri Projects" }] }, twitter: { card: "summary", images: ["/izbri-projects-icon.png"] } };
 }
 export default async function LocaleLayout({ children, params }: { children: React.ReactNode; params: Promise<{ locale: string }> }) {
   const { locale } = await params;

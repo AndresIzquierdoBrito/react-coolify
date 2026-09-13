@@ -1,4 +1,19 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
+
+const adminCatalogResources = [
+  { id: "resource-1", resourceType: "application", resourceUuid: "uuid-1", name: "Atlas API", description: "Customer billing API", status: "running", sourceType: "docker-compose", suggestedUrls: ["https://atlas.example.com"], imported: false, syncedAt: "2026-09-13T12:00:00.000Z", team: { id: "team-default", name: "Default team" } },
+  { id: "resource-2", resourceType: "service", resourceUuid: "uuid-2", name: "Atlas Worker", description: "Background jobs", status: "running", sourceType: "docker-compose", suggestedUrls: ["https://worker.example.com"], imported: false, syncedAt: "2026-09-13T12:00:00.000Z", team: { id: "team-default", name: "Default team" } },
+  { id: "resource-3", resourceType: "application", resourceUuid: "uuid-3", name: "Lumen Web", description: "Public dashboard", status: "running", sourceType: "github", suggestedUrls: ["https://lumen.example.com"], imported: false, syncedAt: "2026-09-13T12:00:00.000Z", team: { id: "team-apuntex", name: "Apuntex Team" } },
+  { id: "resource-4", resourceType: "application", resourceUuid: "uuid-4", name: "Lumen Docs", description: "Documentation site", status: "running", sourceType: "github", suggestedUrls: ["https://docs.example.com"], imported: false, syncedAt: "2026-09-13T12:00:00.000Z", team: { id: "team-apuntex", name: "Apuntex Team" } },
+  { id: "resource-5", resourceType: "service", resourceUuid: "uuid-5", name: "Orbit Queue", description: "Queue service", status: "running", sourceType: "docker-compose", suggestedUrls: ["https://queue.example.com"], imported: false, syncedAt: "2026-09-13T12:00:00.000Z", team: { id: "team-default", name: "Default team" } },
+  { id: "resource-6", resourceType: "application", resourceUuid: "uuid-6", name: "Nova Admin", description: "Internal admin surface", status: "running", sourceType: "gitlab", suggestedUrls: ["https://nova.example.com"], imported: false, syncedAt: "2026-09-13T12:00:00.000Z", team: { id: "team-apuntex", name: "Apuntex Team" } },
+];
+
+async function mockAuthenticatedAdmin(page: Page) {
+  await page.route("**/api/v1/auth/session", (route) => route.fulfill({ json: { authenticated: true, configured: true, methods: { github: true, password: false }, csrfToken: "test-csrf", user: { login: "izbri", displayName: "Andrés Izbri", avatarUrl: null } } }));
+  await page.route("**/api/v1/admin/projects", (route) => route.fulfill({ json: { projects: [] } }));
+  await page.route("**/api/v1/admin/coolify/resources", (route) => route.fulfill({ json: { configured: true, teams: [{ id: "team-default", name: "Default team", apiUrl: "https://coolify.example.com", credentialSource: "database", tokenConfigured: true, enabled: true, syncStatus: "success", lastAttemptAt: null, lastSuccessfulAt: null, lastErrorCode: null, lastErrorMessage: null, syncedResourceCount: 3 }, { id: "team-apuntex", name: "Apuntex Team", apiUrl: "https://apuntes.example.com", credentialSource: "database", tokenConfigured: true, enabled: true, syncStatus: "success", lastAttemptAt: null, lastSuccessfulAt: null, lastErrorCode: null, lastErrorMessage: null, syncedResourceCount: 3 }], resources: adminCatalogResources, sentinel: { serverCount: 0, enabledCount: 0, metricsEnabledCount: 0, lastReportedAt: null } } }));
+}
 
 test("renders localized controls without horizontal overflow", async ({ page }) => {
   await page.goto("/es");
@@ -44,6 +59,52 @@ test("long project names stay inside their identity region", async ({ page }) =>
 test("admin requires authentication", async ({ page }) => {
   await page.goto("/admin");
   await expect(page.getByRole("heading", { name: "Izbri Projects admin" })).toBeVisible();
+});
+
+test("Coolify catalog supports responsive views, filters, and preserved import drafts", async ({ page }) => {
+  await mockAuthenticatedAdmin(page);
+  let importBody: Record<string, unknown> | null = null;
+  await page.route("**/api/v1/admin/projects/import", async (route) => {
+    importBody = route.request().postDataJSON() as Record<string, unknown>;
+    await route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ id: "imported-project" }) });
+  });
+  await page.goto("/admin");
+  await expect(page.getByRole("heading", { name: "Import something new" })).toBeVisible();
+
+  const cards = page.locator(".resource-strip .import-card:not([hidden])");
+  await expect(cards).toHaveCount(adminCatalogResources.length);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+  if ((page.viewportSize()?.width ?? 1000) > 700) {
+    const boxes = await cards.evaluateAll((elements) => elements.map((element) => Math.round(element.getBoundingClientRect().y)));
+    expect(new Set(boxes).size).toBeGreaterThan(1);
+  }
+
+  const search = page.getByRole("searchbox", { name: "Search Coolify resources" });
+  await search.fill("lumen");
+  await expect(cards).toHaveCount(2);
+  await page.getByRole("combobox", { name: "Filter by team" }).selectOption("team-apuntex");
+  await page.getByRole("combobox", { name: "Filter by resource type" }).selectOption("application");
+  await expect(cards).toHaveCount(2);
+  await search.fill("does-not-exist");
+  await expect(page.getByText("No resources match these filters.")).toBeVisible();
+  await page.getByRole("button", { name: "Clear filters" }).first().click();
+  await expect(cards).toHaveCount(adminCatalogResources.length);
+
+  const atlasCard = page.locator(".import-card").filter({ hasText: "Atlas API" });
+  const atlasUrl = atlasCard.getByRole("textbox", { name: "Public URL" });
+  await atlasUrl.fill("https://edited-atlas.example.com");
+  await page.getByRole("button", { name: "List" }).click();
+  await expect(page.getByRole("button", { name: "List" })).toHaveAttribute("aria-pressed", "true");
+  await expect(atlasUrl).toHaveValue("https://edited-atlas.example.com");
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+  if ((page.viewportSize()?.width ?? 1000) <= 700) {
+    const listCardBox = await atlasCard.boundingBox();
+    expect(listCardBox?.width ?? 0).toBeLessThanOrEqual((page.viewportSize()?.width ?? 0) - 24);
+  }
+  await atlasCard.getByRole("button", { name: "Import draft" }).click();
+  await expect.poll(() => importBody).toMatchObject({ resourceId: "resource-1", liveUrl: "https://edited-atlas.example.com" });
+  await page.reload();
+  await expect(page.getByRole("button", { name: "List" })).toHaveAttribute("aria-pressed", "true");
 });
 
 test("sample projects open URL-backed details when the real catalog is empty", async ({ page }) => {

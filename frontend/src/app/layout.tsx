@@ -16,8 +16,34 @@ const mono = JetBrains_Mono({
 
 export const metadata: Metadata = {
   metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL ?? "https://projects.izbri.com"),
+  applicationName: "Izbri Projects",
   title: { default: "Izbri Projects", template: "%s · Izbri Projects" },
   description: "Live applications, case studies, and independently measured reliability by Izbri.",
+  icons: {
+    icon: [
+      { url: "/izbri-projects-icon.svg", type: "image/svg+xml" },
+      { url: "/izbri-projects-icon.png", type: "image/png" },
+      { url: "/izbri-projects-icon.webp", type: "image/webp" },
+    ],
+    apple: [{ url: "/izbri-projects-icon.png", type: "image/png" }],
+  },
+  manifest: "/manifest.webmanifest",
+  openGraph: {
+    siteName: "Izbri Projects",
+    type: "website",
+    images: [
+      {
+        url: "/izbri-projects-icon.png",
+        width: 1100,
+        height: 1142,
+        alt: "Izbri Projects",
+      },
+    ],
+  },
+  twitter: {
+    card: "summary",
+    images: ["/izbri-projects-icon.png"],
+  },
 };
 
 const themeInitScript = `
