@@ -142,3 +142,10 @@ Primary audience: potential collaborators, clients, employers, and technically c
 - Restart and update notices do not repeat an intrusive contact action because every card already retains its persistent problem-report action. Incident and maintenance notices may surface owner contact directly.
 - Published notice type and bilingual notice copy refresh when the dashboard regains focus and at a 30-second interval, without relying on a stale public response cache.
 - Cover uploads, carousel uploads/deletions/reordering, and failed ordering refreshes must preserve every unrelated unsaved form value. Returning from a local preview restores that preview form in the editor. Switching projects with unsaved changes requires explicit confirmation, and closing the browser receives the native unsaved-change warning.
+
+### 2026-09-13 — Multi-team Coolify catalog
+
+- Coolify connections are team-scoped, read-only, independently enabled, and labeled with a human-readable team name. Managed tokens are encrypted at rest and are write-only in the admin interface; the existing environment URL/token remain the backward-compatible deployment-managed default.
+- Applications, services, and Sentinel servers are namespaced by team so identical Coolify UUIDs cannot collide. Public projects display their owning team and expose a team filter alongside status, technology, and resource type.
+- Synchronization runs each enabled team independently. Successful teams remain visible when another team is unavailable; partial and failed teams retain their previous local snapshot. The admin control room shows each team's status, last attempt, last full success, and sanitized warnings.
+- Disabling a team hides its projects and pauses their independent monitoring without deleting authored project data, media, or historical measurements.
