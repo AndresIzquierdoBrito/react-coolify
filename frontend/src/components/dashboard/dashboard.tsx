@@ -3,7 +3,7 @@
 import { forwardRef, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { useTheme } from "next-themes";
+import { useTheme } from "@/components/theme-provider";
 import * as Popover from "@radix-ui/react-popover";
 import { ArrowUpRight, Check, ChevronDown, ChevronLeft, ChevronRight, Filter, Github, House, Info, Linkedin, MessageCircleWarning, Moon, Rocket, RotateCw, SlidersHorizontal, Sun, TriangleAlert, Wrench, X } from "lucide-react";
 import { ES, GB } from "country-flag-icons/react/3x2";

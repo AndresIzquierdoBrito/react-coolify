@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { Activity, ArrowDown, ArrowUp, ArrowUpRight, CheckCircle2, Cloud, Github, GripVertical, ImagePlus, LogOut, Moon, Plus, RefreshCw, Save, Sun, Trash2 } from "lucide-react";
-import { useTheme } from "next-themes";
+import { useTheme } from "@/components/theme-provider";
 import { projectInputSchema, type ProjectInput } from "@izbri/contracts";
 import { projectAccents } from "@/lib/project-accents";
 import { previewStorageKey } from "@/lib/api";

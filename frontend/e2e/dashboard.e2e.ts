@@ -19,10 +19,13 @@ test("renders localized controls without horizontal overflow", async ({ page }) 
 });
 
 test("language and appearance controls remain interactive", async ({ page }) => {
+  const scriptWarnings: string[] = [];
+  page.on("console", (message) => { if (message.type() === "error" && message.text().includes("Encountered a script tag")) scriptWarnings.push(message.text()); });
   await page.goto("/en");
   await page.getByRole("button", { name: "Cambiar a español" }).click();
   await expect(page).toHaveURL(/\/es(?:\?|$)/);
   await expect(page.getByRole("heading", { name: "Izbri Proyectos" })).toBeVisible();
+  expect(scriptWarnings).toHaveLength(0);
   const before = await page.locator("html").getAttribute("data-theme");
   await page.getByRole("button", { name: "Cambiar tema de color" }).click();
   await expect.poll(() => page.locator("html").getAttribute("data-theme")).not.toBe(before);

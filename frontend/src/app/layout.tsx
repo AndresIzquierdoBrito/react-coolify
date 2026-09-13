@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Rubik, JetBrains_Mono } from "next/font/google";
+import Script from "next/script";
 import "./globals.css";
 import { Providers } from "@/components/providers";
 
@@ -19,6 +20,18 @@ export const metadata: Metadata = {
   description: "Live applications, case studies, and independently measured reliability by Izbri.",
 };
 
+const themeInitScript = `
+(function () {
+  try {
+    var stored = localStorage.getItem("theme");
+    var theme = stored === "dark" || stored === "light" || stored === "system" ? stored : "system";
+    var resolved = theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : theme === "system" ? "light" : theme;
+    document.documentElement.setAttribute("data-theme", resolved);
+    document.documentElement.style.colorScheme = resolved;
+  } catch (_) {}
+}());
+`;
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -28,6 +41,7 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <body className={`${rubik.variable} ${mono.variable}`}>
         <Providers>{children}</Providers>
+        <Script id="theme-init" strategy="beforeInteractive">{themeInitScript}</Script>
       </body>
     </html>
   );
