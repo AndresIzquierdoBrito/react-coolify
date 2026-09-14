@@ -33,6 +33,7 @@ describe("uptime baseline migration", () => {
     const db = createDatabase(databasePath);
     expect(db.sqlite.prepare("SELECT uptime_start_date FROM projects WHERE id='legacy-project'").pluck().get()).toBe("2025-11-02");
     expect(db.sqlite.prepare("SELECT first_checked_at FROM health_state WHERE project_id='legacy-project'").pluck().get()).toBe("2025-11-03T10:11:12.000Z");
+    expect(db.sqlite.prepare("SELECT label_en,uptime_enabled FROM project_resources WHERE project_id='legacy-project'").get()).toEqual({ label_en: "", uptime_enabled: 1 });
     expect((db.sqlite.prepare("PRAGMA table_info(projects)").all() as { name: string }[]).some((column) => column.name === "uptime_start_date")).toBe(true);
     db.sqlite.close();
   });

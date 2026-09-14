@@ -30,7 +30,7 @@ export function createPublicRouter(projects: ProjectRepository) {
     const project = projects.getPublicBySlug(request.params.slug, locale);
     if (!project) return notFound(response, "PROJECT_NOT_FOUND", "Project not found.");
     const range = ["24h", "7d", "30d", "all"].includes(String(request.query.range)) ? String(request.query.range) : "30d";
-    response.json({ range, uptime: project.uptime, health: project.health, latencySeries: project.latencySeries, incidents: project.incidents });
+    response.json({ range, uptime: project.uptime, health: project.health, latencySeries: project.latencySeries, incidents: project.incidents, resources: project.resources });
   });
   router.get("/site", (request, response) => {
     const locale = localeSchema.catch("en").parse(request.query.locale);
@@ -112,12 +112,18 @@ export function createAdminRouter(dependencies: { db: DatabaseContext; projects:
 function catalog(db: DatabaseContext) {
   return db.sqlite.prepare(`
     SELECT cr.id,cr.resource_type AS resourceType,cr.resource_uuid AS resourceUuid,cr.name,cr.description,
-      cr.status,cr.source_type AS sourceType,cr.suggested_urls_json AS suggestedUrlsJson,cr.synced_at AS syncedAt,
+      cr.status,cr.source_type AS sourceType,cr.source_branch AS sourceBranch,cr.commit_sha AS commitSha,
+      cr.updated_at_source AS resourceUpdatedAt,cr.deployment_in_progress AS deploymentInProgress,
+      cr.last_successful_deployment_at AS lastSuccessfulDeploymentAt,
+      cr.suggested_urls_json AS suggestedUrlsJson,cr.synced_at AS syncedAt,
       cr.team_id AS teamId,ct.name AS teamName,
-      CASE WHEN p.id IS NULL THEN 0 ELSE 1 END AS imported
-    FROM coolify_resources cr JOIN coolify_teams ct ON ct.id=cr.team_id LEFT JOIN projects p ON p.coolify_resource_id=cr.id
+      CASE WHEN pr.project_id IS NULL THEN 0 ELSE 1 END AS imported,
+      pr.project_id AS assignedProjectId,p.slug AS assignedProjectSlug,p.title_en AS assignedProjectTitle,
+      CASE WHEN p.coolify_resource_id=cr.id THEN 1 ELSE 0 END AS anchor
+    FROM coolify_resources cr JOIN coolify_teams ct ON ct.id=cr.team_id LEFT JOIN project_resources pr ON pr.coolify_resource_id=cr.id
+      LEFT JOIN projects p ON p.id=pr.project_id
     ORDER BY cr.resource_type,cr.name
-  `).all().map((row) => { const item = row as Record<string, unknown>; return { ...item, team: { id: String(item.teamId), name: String(item.teamName) }, imported: Boolean(item.imported), suggestedUrls: JSON.parse(String(item.suggestedUrlsJson)), suggestedUrlsJson: undefined }; });
+  `).all().map((row) => { const item = row as Record<string, unknown>; let suggestedUrls: string[] = []; try { suggestedUrls = JSON.parse(String(item.suggestedUrlsJson ?? "[]")); } catch { /* ignore malformed catalog data */ } return { ...item, team: { id: String(item.teamId), name: String(item.teamName) }, imported: Boolean(item.imported), anchor: Boolean(item.anchor), deploymentInProgress: Boolean(item.deploymentInProgress), assignedProjectId: item.assignedProjectId ? String(item.assignedProjectId) : null, assignedProjectSlug: item.assignedProjectSlug ? String(item.assignedProjectSlug) : null, assignedProjectTitle: item.assignedProjectTitle ? String(item.assignedProjectTitle) : null, suggestedUrls, suggestedUrlsJson: undefined }; });
 }
 
 function sentinelSummary(db: DatabaseContext) {
@@ -127,7 +133,7 @@ function sentinelSummary(db: DatabaseContext) {
 
 function stringFilters(request: Request) {
   const get = (name: string) => typeof request.query[name] === "string" ? request.query[name] as string : undefined;
-  return { status: get("status"), technology: get("technology"), resourceType: get("resourceType"), team: get("team"), sort: get("sort") };
+  return { status: get("status"), technology: get("technology"), resourceType: get("resourceType"), sort: get("sort") };
 }
 
 function notFound(response: Response, code: string, message: string) { return response.status(404).json({ error: { code, message, requestId: response.locals.requestId } }); }
@@ -138,7 +144,7 @@ export function errorHandler(error: unknown, _request: Request, response: Respon
   const isZod = error && typeof error === "object" && "issues" in error;
   const message = error instanceof Error ? error.message : "Unexpected server error";
   const errorCode = error && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : undefined;
-  const knownCodes = ["RESOURCE_NOT_FOUND", "RESOURCE_ALREADY_IMPORTED", "INVALID_STATUS_RANGE", "INVALID_UPTIME_START_DATE", "INCOMPLETE_TRANSLATIONS", "INCOMPLETE_MAINTENANCE_TRANSLATIONS", "COVER_REQUIRED", "PROJECT_NOT_FOUND", "UNSUPPORTED_IMAGE", "GALLERY_ALT_REQUIRED", "GALLERY_LIMIT", "GALLERY_IMAGE_NOT_FOUND", "INVALID_GALLERY_ORDER", "COOLIFY_TEAM_NOT_FOUND", "COOLIFY_TEAM_CREDENTIALS_UNAVAILABLE", "COOLIFY_TEAM_TOKEN_REQUIRED", "COOLIFY_TEAM_NAME_TAKEN", "COOLIFY_TEAM_NAME_INVALID", "COOLIFY_TEAM_URL_INVALID", "COOLIFY_TEAM_URL_REQUIRED", "COOLIFY_ENV_TEAM_MANAGED", "COOLIFY_CREDENTIALS_KEY_MISSING", "COOLIFY_CREDENTIALS_KEY_INVALID"];
+  const knownCodes = ["RESOURCE_NOT_FOUND", "RESOURCE_ALREADY_IMPORTED", "RESOURCE_ALREADY_ASSIGNED", "DUPLICATE_PROJECT_RESOURCE", "PRIMARY_RESOURCE_REQUIRED", "PROJECT_RESOURCE_TEAM_MISMATCH", "INVALID_STATUS_RANGE", "INVALID_UPTIME_START_DATE", "INCOMPLETE_TRANSLATIONS", "INCOMPLETE_MAINTENANCE_TRANSLATIONS", "INCOMPLETE_RESOURCE_LABELS", "RESOURCE_HEALTH_REQUIRED", "COVER_REQUIRED", "PROJECT_NOT_FOUND", "UNSUPPORTED_IMAGE", "GALLERY_ALT_REQUIRED", "GALLERY_LIMIT", "GALLERY_IMAGE_NOT_FOUND", "INVALID_GALLERY_ORDER", "COOLIFY_TEAM_NOT_FOUND", "COOLIFY_TEAM_CREDENTIALS_UNAVAILABLE", "COOLIFY_TEAM_TOKEN_REQUIRED", "COOLIFY_TEAM_NAME_TAKEN", "COOLIFY_TEAM_NAME_INVALID", "COOLIFY_TEAM_URL_INVALID", "COOLIFY_TEAM_URL_REQUIRED", "COOLIFY_ENV_TEAM_MANAGED", "COOLIFY_CREDENTIALS_KEY_MISSING", "COOLIFY_CREDENTIALS_KEY_INVALID"];
   const knownCode = knownCodes.includes(errorCode ?? "") ? errorCode : knownCodes.includes(message) ? message : undefined;
   const status = isZod ? 400 : knownCode ? 422 : 500;
   const projectDetails = error instanceof ProjectValidationError ? error.fields.map((field) => ({ path: [field], message: "Required before publishing." })) : undefined;

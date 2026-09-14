@@ -30,9 +30,19 @@ const complete = projectInputSchema.parse({
   expectedStatusMax: 399,
   coverAltEn: "AppCache dashboard",
   coverAltEs: "Panel de AppCache",
+  resources: [{ resourceId: "resource-1", labelEn: "Application", labelEs: "Aplicación", displayOrder: 0, uptimeEnabled: true, uptimeStartDate: "2026-01-01", healthUrl: "https://example.com", healthMethod: "GET", healthTimeoutMs: 10_000, expectedStatusMin: 200, expectedStatusMax: 399 }],
 });
 
 describe("publication completeness", () => {
+  it("accepts a resource-only monitor payload and derives legacy rollup fields", () => {
+    const resourceOnly: Record<string, unknown> = { ...complete };
+    for (const key of ["monitoringEnabled", "uptimeStartDate", "healthUrl", "healthMethod", "healthTimeoutMs", "expectedStatusMin", "expectedStatusMax"]) delete resourceOnly[key];
+    const parsed = projectInputSchema.parse(resourceOnly);
+    expect(parsed.monitoringEnabled).toBe(true);
+    expect(parsed.uptimeStartDate).toBe("2026-01-01");
+    expect(parsed.healthUrl).toBe("https://example.com");
+  });
+
   it("reports only the fields that are actually missing", () => {
     const errors = getMissingPublicationFields({ ...complete, summaryEn: "", descriptionEs: "" });
     expect(errors).toEqual({

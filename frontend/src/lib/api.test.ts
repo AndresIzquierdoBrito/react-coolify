@@ -35,6 +35,7 @@ describe("admin preview projection", () => {
       expectedStatusMax: 399,
       coverAltEn: "English cover",
       coverAltEs: "Portada española",
+      resources: [{ resourceId: "demo-resource-0", labelEn: "Frontend", labelEs: "Interfaz", displayOrder: 0, uptimeEnabled: true, uptimeStartDate: "2026-07-01", healthUrl: "https://preview.example.com/health", healthMethod: "GET", healthTimeoutMs: 10_000, expectedStatusMin: 200, expectedStatusMax: 399 }],
     });
 
     const preview = applyPreviewInput(base!, input, "es");

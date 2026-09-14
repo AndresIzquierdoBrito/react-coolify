@@ -2,7 +2,7 @@ import { projectInputSchema, type Locale, type ProjectDetail, type ProjectInput,
 import { getDemoProjectDetail, getDemoProjects } from "./demo-projects";
 
 const internalApi = process.env.API_INTERNAL_URL ?? "http://localhost:3001";
-export interface SiteData { title: string; githubUrl: string | null; contactUrl: string | null; technologies: { id: string; name: string; slug: string }[]; teams: { id: string; name: string }[] }
+export interface SiteData { title: string; githubUrl: string | null; contactUrl: string | null; technologies: { id: string; name: string; slug: string }[] }
 
 export async function getInitialDashboard(locale: Locale): Promise<{ projects: ProjectSummary[]; site: SiteData; available: boolean; sample: boolean }> {
   try {
@@ -14,10 +14,10 @@ export async function getInitialDashboard(locale: Locale): Promise<{ projects: P
     const [{ projects }, site] = await Promise.all([projectResponse.json() as Promise<{ projects: ProjectSummary[] }>, siteResponse.json() as Promise<SiteData>]);
     if (projects.length > 0) return { projects, site, available: true, sample: false };
     const samples = getDemoProjects(locale);
-    return { projects: samples, site: { ...site, technologies: uniqueTechnologies(samples), teams: [{ id: "demo-team", name: "Sample team" }] }, available: true, sample: true };
+    return { projects: samples, site: { ...site, technologies: uniqueTechnologies(samples) }, available: true, sample: true };
   } catch {
     const samples = getDemoProjects(locale);
-    return { projects: samples, site: { title: "Izbri Projects", githubUrl: null, contactUrl: null, technologies: uniqueTechnologies(samples), teams: [{ id: "demo-team", name: "Sample team" }] }, available: false, sample: true };
+    return { projects: samples, site: { title: "Izbri Projects", githubUrl: null, contactUrl: null, technologies: uniqueTechnologies(samples) }, available: false, sample: true };
   }
 }
 
@@ -33,7 +33,20 @@ export async function fetchProjectDetail(slug: string, locale: Locale, signal?: 
   if (!stored) return project;
   try {
     const parsed = projectInputSchema.safeParse(JSON.parse(stored));
-    return parsed.success ? applyPreviewInput(project, parsed.data, locale) : project;
+    if (!parsed.success) return project;
+    const preview = applyPreviewInput(project, parsed.data, locale);
+    const catalogResponse = await fetch("/api/v1/admin/coolify/resources", { credentials: "include", cache: "no-store" });
+    if (!catalogResponse.ok) return preview;
+    const catalog = (await catalogResponse.json() as { resources?: { id: string; name: string; resourceType: "application" | "service"; status: string | null; sourceType: string | null; sourceBranch?: string | null; commitSha?: string | null; resourceUpdatedAt?: string | null; deploymentInProgress?: boolean; lastSuccessfulDeploymentAt?: string | null; syncedAt: string }[] }).resources ?? [];
+    const existing = new Set(preview.resources.map((resource) => resource.resourceId));
+    const added = parsed.data.resources?.filter((resource) => !existing.has(resource.resourceId)).flatMap((resource) => {
+      const source = catalog.find((item) => item.id === resource.resourceId);
+      if (!source) return [];
+      const health = resource.uptimeEnabled ? emptyPreviewHealth(resource.uptimeStartDate) : null;
+      return [{ id: `preview-${source.id}`, resourceId: source.id, label: locale === "es" ? resource.labelEs : resource.labelEn, resourceName: source.name, resourceType: source.resourceType, uptimeEnabled: resource.uptimeEnabled, coolify: { runtimeStatus: source.status, sourceType: source.sourceType, branch: source.sourceBranch ?? null, commitSha: source.commitSha ?? null, resourceUpdatedAt: source.resourceUpdatedAt ?? null, deploymentInProgress: Boolean(source.deploymentInProgress), lastSuccessfulDeploymentAt: source.lastSuccessfulDeploymentAt ?? null, syncedAt: source.syncedAt, sentinel: null }, health, uptime: resource.uptimeEnabled ? { h24: null, d7: null, d30: null, all: null } : null, latencySeries: [], incidents: [] }];
+    }) ?? [];
+    const byResourceId = new Map([...preview.resources, ...added].map((resource) => [resource.resourceId, resource]));
+    return { ...preview, resources: parsed.data.resources.flatMap((resource) => { const item = byResourceId.get(resource.resourceId); return item ? [item] : []; }) };
   } catch {
     return project;
   }
@@ -50,6 +63,7 @@ export function previewStorageKey(projectId: string) { return `izbri-project-pre
 export function applyPreviewInput(project: ProjectDetail, input: ProjectInput, locale: Locale): ProjectDetail {
   const maintenanceMessage = input.operationalNoticeType === "none" ? null : (locale === "es" ? input.maintenanceMessageEs : input.maintenanceMessageEn) || null;
   const coverAlt = locale === "es" ? input.coverAltEs : input.coverAltEn;
+  const resourceInputs = input.resources ?? [];
   return {
     ...project,
     slug: input.slug,
@@ -67,7 +81,18 @@ export function applyPreviewInput(project: ProjectDetail, input: ProjectInput, l
     accentColor: input.accentColor,
     health: { ...project.health, uptimeStartDate: input.uptimeStartDate },
     cover: project.cover ? { ...project.cover, alt: coverAlt || project.cover.alt } : null,
+    resources: resourceInputs.flatMap((input) => {
+      const resource = project.resources.find((item) => item.resourceId === input.resourceId);
+      if (!resource) return [];
+      const override = resourceInputs.find((item) => item.resourceId === resource.resourceId);
+      if (!override) return [];
+      return [{ ...resource, label: locale === "es" ? override.labelEs : override.labelEn, uptimeEnabled: override.uptimeEnabled, health: override.uptimeEnabled ? resource.health ?? emptyPreviewHealth(override.uptimeStartDate) : null, uptime: override.uptimeEnabled ? resource.uptime ?? { h24: null, d7: null, d30: null, all: null } : null, latencySeries: override.uptimeEnabled ? resource.latencySeries : [], incidents: override.uptimeEnabled ? resource.incidents : [] }];
+    }),
   };
+}
+
+function emptyPreviewHealth(uptimeStartDate: string) {
+  return { status: "collecting" as const, uptime30d: null, uptimeStartDate, measurementStartedAt: null, assumedUptime: true, streakStartedAt: null, streakDays: null, latencyMs: null, lastCheckedAt: null, daily: Array.from({ length: 30 }, () => null), activeIncident: null };
 }
 
 function technologySlug(value: string) {

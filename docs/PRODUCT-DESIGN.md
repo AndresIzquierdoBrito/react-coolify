@@ -146,6 +146,13 @@ Primary audience: potential collaborators, clients, employers, and technically c
 ### 2026-09-13 — Multi-team Coolify catalog
 
 - Coolify connections are team-scoped, read-only, independently enabled, and labeled with a human-readable team name. Managed tokens are encrypted at rest and are write-only in the admin interface; the existing environment URL/token remain the backward-compatible deployment-managed default.
-- Applications, services, and Sentinel servers are namespaced by team so identical Coolify UUIDs cannot collide. Public projects display their owning team and expose a team filter alongside status, technology, and resource type.
+- Applications, services, and Sentinel servers are namespaced by team so identical Coolify UUIDs cannot collide. Team ownership stays internal to synchronization and catalog management; public projects do not display team labels or expose a team filter.
 - Synchronization runs each enabled team independently. Successful teams remain visible when another team is unavailable; partial and failed teams retain their previous local snapshot. The admin control room shows each team's status, last attempt, last full success, and sanitized warnings.
 - Disabling a team hides its projects and pauses their independent monitoring without deleting authored project data, media, or historical measurements.
+
+### 2026-09-14 — Grouped Coolify resources and component uptime
+
+- A published project may group multiple Coolify resources from one team. The originally imported resource remains the project anchor; attached resources have ordered bilingual public labels and exclusive project ownership.
+- All attached resources are named on the public card and expanded view. Only resources explicitly enabled for uptime receive independent health checks and component reliability history; unmonitored resources expose Coolify state without an independent availability claim.
+- Cards show one combined project uptime. A combined check succeeds only when every selected component succeeds; the expanded panel shows each selected component’s individual uptime, latency, and incidents.
+- Existing project-level uptime is retained as the rollup history. When a component is newly enabled, its period before the first real check is treated as assumed-perfect according to the existing uptime baseline rules.

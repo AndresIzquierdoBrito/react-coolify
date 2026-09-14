@@ -38,7 +38,7 @@ The default monitor and catalog-sync intervals are exposed as `MONITOR_INTERVAL_
 
 The first catalog synchronization runs at startup and repeats every five minutes. Each enabled Coolify team is synchronized independently; an unavailable team retains its last local snapshot while other teams continue updating. Imports remain drafts until both locales and a cover image are complete.
 
-Every public project is labeled with its owning Coolify team and can be filtered by team. Disabling a team hides its projects and pauses their independent uptime checks without deleting project content or history. Team sync status and last successful synchronization time are visible only in the admin control room.
+Team ownership remains internal to Coolify synchronization and catalog management. It is not exposed as a project label or public filter. Disabling a team hides its projects and pauses their independent uptime checks without deleting project content or history. Team sync status and last successful synchronization time are visible only in the admin control room.
 
 Managed-team tokens can be rotated from the admin connection form by entering a replacement token; leaving the field blank keeps the encrypted token already stored. Keep `COOLIFY_CREDENTIALS_KEY` backed up when restoring the SQLite volume, because it is required to decrypt managed tokens.
 

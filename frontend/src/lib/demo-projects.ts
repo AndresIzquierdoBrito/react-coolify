@@ -48,10 +48,24 @@ export function getDemoProjectDetail(slug: string, locale: Locale): ProjectDetai
     uptime,
     latencySeries: values.map((value, point) => ({ at: new Date(Date.UTC(2026, 7, 16, point + 8)).toISOString(), value })),
     incidents: index === 2 ? [{ startedAt: "2026-08-16T13:12:00.000Z", endedAt: null, trigger: "HTTP_STATUS", statusCode: 503, recoveredStatusCode: null }] : index === 1 ? [{ startedAt: "2026-08-12T09:20:00.000Z", endedAt: "2026-08-12T09:29:00.000Z", trigger: "TimeoutError", statusCode: null, recoveredStatusCode: 200 }] : [],
+    resources: summary.resources.map((resource) => ({ ...resource, uptime, latencySeries: values.map((value, point) => ({ at: new Date(Date.UTC(2026, 7, 16, point + 8)).toISOString(), value })), incidents: index === 2 ? [{ startedAt: "2026-08-16T13:12:00.000Z", endedAt: null, trigger: "HTTP_STATUS", statusCode: 503, recoveredStatusCode: null }] : index === 1 ? [{ startedAt: "2026-08-12T09:20:00.000Z", endedAt: "2026-08-12T09:29:00.000Z", trigger: "TimeoutError", statusCode: null, recoveredStatusCode: 200 }] : [] })),
   };
 }
 
 function makeSummary(index: number, copy: { title: string; summary: string }, resourceType: "application" | "service", names: string[], status: "online" | "degraded" | "offline", uptime30d: number, streakDays: number | null, latencyMs: number | null, history: number[], featured: boolean, maintenanceMessage: string | null = null): ProjectSummary {
+  const coolify = {
+    runtimeStatus: status === "offline" ? "exited" : "running",
+    sourceType: resourceType === "service" ? "docker-compose" : index === 0 ? "nixpacks" : "dockerfile",
+    branch: resourceType === "application" ? "main" : null,
+    commitSha: resourceType === "application" ? ["a84d19c9f12b", "38bc0a2f7de1"][index] ?? null : null,
+    resourceUpdatedAt: "2026-08-16T14:22:00.000Z",
+    deploymentInProgress: index === 1,
+    lastSuccessfulDeploymentAt: index === 2 ? null : "2026-08-16T14:18:00.000Z",
+    syncedAt: "2026-08-16T14:30:00.000Z",
+    sentinel: null,
+  };
+  const health = { status, uptime30d, uptimeStartDate: "2026-07-01", measurementStartedAt: "2026-07-01T00:00:00.000Z", assumedUptime: false, streakStartedAt: streakDays == null ? null : "2026-07-01T00:00:00.000Z", streakDays, latencyMs, lastCheckedAt: "2026-08-16T14:30:00.000Z", daily: history, activeIncident: index === 2 ? { startedAt: "2026-08-16T13:12:00.000Z", trigger: "HTTP_STATUS", statusCode: 503 } : null };
+  const resource = { id: `demo-resource-${index}`, resourceId: `demo-resource-${index}`, label: resourceType === "service" ? "API" : "Application", resourceName: copy.title, resourceType, uptimeEnabled: true, coolify, health };
   return {
     id: `demo-project-${index}`,
     slug: `demo-${["atlas-inbox", "canary-notes", "lumen-api"][index]}`,
@@ -60,27 +74,18 @@ function makeSummary(index: number, copy: { title: string; summary: string }, re
     maintenanceMessage,
     operationalNoticeType: index === 1 ? "maintenance" : "none",
     resourceType,
-    team: { id: "demo-team", name: "Sample team" },
     technologies: names.map(technology),
     liveUrl: "https://example.com",
     repositoryUrl: index === 0 ? "https://github.com" : null,
     caseStudyUrl: index === 1 ? "https://example.com" : null,
     cover: null,
-    health: { status, uptime30d, uptimeStartDate: "2026-07-01", measurementStartedAt: "2026-07-01T00:00:00.000Z", assumedUptime: false, streakStartedAt: streakDays == null ? null : "2026-07-01T00:00:00.000Z", streakDays, latencyMs, lastCheckedAt: "2026-08-16T14:30:00.000Z", daily: history, activeIncident: index === 2 ? { startedAt: "2026-08-16T13:12:00.000Z", trigger: "HTTP_STATUS", statusCode: 503 } : null },
+    health,
+    resources: [resource],
+    resourceTypes: [resourceType],
     createdAt: new Date(Date.UTC(2026, 6, 12 + index)).toISOString(),
     featured,
     displayOrder: index,
     accentColor: (["lime", "cyan", "coral"] as const)[index] ?? "lime",
-    coolify: {
-      runtimeStatus: status === "offline" ? "exited" : "running",
-      sourceType: resourceType === "service" ? "docker-compose" : index === 0 ? "nixpacks" : "dockerfile",
-      branch: resourceType === "application" ? "main" : null,
-      commitSha: resourceType === "application" ? ["a84d19c9f12b", "38bc0a2f7de1"][index] ?? null : null,
-      resourceUpdatedAt: "2026-08-16T14:22:00.000Z",
-      deploymentInProgress: index === 1,
-      lastSuccessfulDeploymentAt: index === 2 ? null : "2026-08-16T14:18:00.000Z",
-      syncedAt: "2026-08-16T14:30:00.000Z",
-      sentinel: null,
-    },
+    coolify,
   };
 }

@@ -17,6 +17,11 @@ export function getMissingPublicationFields(form: ProjectInput): Partial<Record<
     if (!form.maintenanceMessageEn.trim()) errors.maintenanceMessageEn = "Add the English notice before publishing.";
     if (!form.maintenanceMessageEs.trim()) errors.maintenanceMessageEs = "Añade el aviso en español antes de publicar.";
   }
+  for (const [index, resource] of (form.resources ?? []).entries()) {
+    if (!resource.labelEn.trim()) errors.resources = `Add an English label for resource ${index + 1}.`;
+    if (!resource.labelEs.trim()) errors.resources = `Añade una etiqueta en español para el recurso ${index + 1}.`;
+    if (resource.uptimeEnabled && !resource.healthUrl?.trim()) errors.resources = `Add a health-check URL for resource ${index + 1}.`;
+  }
   return errors;
 }
 
@@ -24,6 +29,6 @@ export function getChangedProjectFields(form: ProjectInput, saved: ProjectInput)
   return (Object.keys(form) as (keyof ProjectInput)[]).filter((key) => {
     const left = form[key];
     const right = saved[key];
-    return Array.isArray(left) && Array.isArray(right) ? left.length !== right.length || left.some((value, index) => value !== right[index]) : left !== right;
+    return Array.isArray(left) && Array.isArray(right) ? JSON.stringify(left) !== JSON.stringify(right) : left !== right;
   });
 }

@@ -122,7 +122,7 @@ test("sample projects open URL-backed details when the real catalog is empty", a
   await page.getByRole("button", { name: /Atlas Inbox/ }).click();
   await expect(page.getByRole("dialog", { name: "Atlas Inbox" }).locator(".carousel-graphic")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Next project image" })).toHaveCount(0);
-  await expect(page.getByRole("dialog", { name: "Atlas Inbox" }).locator(".deployment-meta > div")).toHaveCount(6);
+  await expect(page.getByRole("dialog", { name: "Atlas Inbox" }).locator(".deployment-meta .meta-fact")).toHaveCount(5);
   const chart = page.locator(".latency-chart");
   await expect(chart).toBeVisible();
   expect(await chart.evaluate((element) => getComputedStyle(element).backgroundColor)).not.toBe("rgb(17, 19, 14)");

@@ -95,4 +95,5 @@ const baseInput: ProjectInput = {
   expectedStatusMax: 399,
   coverAltEn: "",
   coverAltEs: "",
+  resources: [{ resourceId: "legacy-default:application:app-1", labelEn: "Example", labelEs: "Example", displayOrder: 0, uptimeEnabled: true, uptimeStartDate: "2026-01-01", healthUrl: "https://example.com/health", healthMethod: "GET", healthTimeoutMs: 10_000, expectedStatusMin: 200, expectedStatusMax: 399 }],
 };

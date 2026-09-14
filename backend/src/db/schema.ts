@@ -95,6 +95,26 @@ export const projects = sqliteTable(
   (table) => [uniqueIndex("project_coolify_resource_unique").on(table.coolifyResourceId)],
 );
 
+export const projectResources = sqliteTable(
+  "project_resources",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+    coolifyResourceId: text("coolify_resource_id").notNull().references(() => coolifyResources.id),
+    labelEn: text("label_en").notNull().default(""),
+    labelEs: text("label_es").notNull().default(""),
+    displayOrder: integer("display_order").notNull().default(0),
+    uptimeEnabled: integer("uptime_enabled", { mode: "boolean" }).notNull().default(false),
+    healthUrl: text("health_url"),
+    healthMethod: text("health_method", { enum: ["GET", "HEAD"] }).notNull().default("GET"),
+    healthTimeoutMs: integer("health_timeout_ms").notNull().default(10_000),
+    expectedStatusMin: integer("expected_status_min").notNull().default(200),
+    expectedStatusMax: integer("expected_status_max").notNull().default(399),
+    uptimeStartDate: text("uptime_start_date"),
+  },
+  (table) => [uniqueIndex("project_resource_unique").on(table.coolifyResourceId), uniqueIndex("project_resource_order_unique").on(table.projectId, table.displayOrder)],
+);
+
 export const technologies = sqliteTable("technologies", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
@@ -172,3 +192,44 @@ export const dailyMetrics = sqliteTable("daily_metrics", {
   latencySumMs: real("latency_sum_ms").notNull().default(0),
   latencyCount: integer("latency_count").notNull().default(0),
 });
+
+export const resourceHealthState = sqliteTable("resource_health_state", {
+  projectResourceId: text("project_resource_id").primaryKey().references(() => projectResources.id, { onDelete: "cascade" }),
+  status: text("status").notNull().default("collecting"),
+  consecutiveFailures: integer("consecutive_failures").notNull().default(0),
+  lastCheckedAt: text("last_checked_at"),
+  lastSuccessAt: text("last_success_at"),
+  streakStartedAt: text("streak_started_at"),
+  latencyMs: integer("latency_ms"),
+  firstCheckedAt: text("first_checked_at"),
+  monitorIntervalMsAtStart: integer("monitor_interval_ms_at_start"),
+});
+
+export const resourceHealthChecks = sqliteTable("resource_health_checks", {
+  id: text("id").primaryKey(),
+  projectResourceId: text("project_resource_id").notNull().references(() => projectResources.id, { onDelete: "cascade" }),
+  checkedAt: text("checked_at").notNull(),
+  success: integer("success", { mode: "boolean" }).notNull(),
+  statusCode: integer("status_code"),
+  latencyMs: integer("latency_ms"),
+  errorCode: text("error_code"),
+});
+
+export const resourceIncidents = sqliteTable("resource_incidents", {
+  id: text("id").primaryKey(),
+  projectResourceId: text("project_resource_id").notNull().references(() => projectResources.id, { onDelete: "cascade" }),
+  startedAt: text("started_at").notNull(),
+  endedAt: text("ended_at"),
+  triggerErrorCode: text("trigger_error_code"),
+  triggerStatusCode: integer("trigger_status_code"),
+  recoveredStatusCode: integer("recovered_status_code"),
+});
+
+export const resourceDailyMetrics = sqliteTable("resource_daily_metrics", {
+  projectResourceId: text("project_resource_id").notNull().references(() => projectResources.id, { onDelete: "cascade" }),
+  day: text("day").notNull(),
+  checkCount: integer("check_count").notNull().default(0),
+  successCount: integer("success_count").notNull().default(0),
+  latencySumMs: real("latency_sum_ms").notNull().default(0),
+  latencyCount: integer("latency_count").notNull().default(0),
+}, (table) => [uniqueIndex("resource_daily_metrics_unique").on(table.projectResourceId, table.day)]);

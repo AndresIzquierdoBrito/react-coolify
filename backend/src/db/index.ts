@@ -66,6 +66,21 @@ function migrate(db: Database.Database) {
       uptime_start_date TEXT,
       created_at TEXT NOT NULL, updated_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS project_resources (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      coolify_resource_id TEXT NOT NULL REFERENCES coolify_resources(id),
+      label_en TEXT NOT NULL DEFAULT '', label_es TEXT NOT NULL DEFAULT '',
+      display_order INTEGER NOT NULL DEFAULT 0,
+      uptime_enabled INTEGER NOT NULL DEFAULT 0,
+      health_url TEXT, health_method TEXT NOT NULL DEFAULT 'GET',
+      health_timeout_ms INTEGER NOT NULL DEFAULT 10000,
+      expected_status_min INTEGER NOT NULL DEFAULT 200,
+      expected_status_max INTEGER NOT NULL DEFAULT 399,
+      uptime_start_date TEXT,
+      UNIQUE(coolify_resource_id), UNIQUE(project_id, display_order)
+    );
+    CREATE INDEX IF NOT EXISTS project_resources_project_order ON project_resources(project_id, display_order);
     CREATE TABLE IF NOT EXISTS technologies (
       id TEXT PRIMARY KEY, name TEXT NOT NULL, slug TEXT NOT NULL UNIQUE
     );
@@ -110,6 +125,28 @@ function migrate(db: Database.Database) {
       latency_sum_ms REAL NOT NULL DEFAULT 0, latency_count INTEGER NOT NULL DEFAULT 0,
       UNIQUE(project_id, day)
     );
+    CREATE TABLE IF NOT EXISTS resource_health_state (
+      project_resource_id TEXT PRIMARY KEY REFERENCES project_resources(id) ON DELETE CASCADE,
+      status TEXT NOT NULL DEFAULT 'collecting', consecutive_failures INTEGER NOT NULL DEFAULT 0,
+      last_checked_at TEXT, last_success_at TEXT, streak_started_at TEXT, latency_ms INTEGER,
+      first_checked_at TEXT, monitor_interval_ms_at_start INTEGER
+    );
+    CREATE TABLE IF NOT EXISTS resource_health_checks (
+      id TEXT PRIMARY KEY, project_resource_id TEXT NOT NULL REFERENCES project_resources(id) ON DELETE CASCADE,
+      checked_at TEXT NOT NULL, success INTEGER NOT NULL, status_code INTEGER, latency_ms INTEGER, error_code TEXT
+    );
+    CREATE INDEX IF NOT EXISTS resource_health_checks_project_date ON resource_health_checks(project_resource_id, checked_at);
+    CREATE TABLE IF NOT EXISTS resource_incidents (
+      id TEXT PRIMARY KEY, project_resource_id TEXT NOT NULL REFERENCES project_resources(id) ON DELETE CASCADE,
+      started_at TEXT NOT NULL, ended_at TEXT, trigger_error_code TEXT, trigger_status_code INTEGER, recovered_status_code INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS resource_incidents_project_date ON resource_incidents(project_resource_id, started_at);
+    CREATE TABLE IF NOT EXISTS resource_daily_metrics (
+      project_resource_id TEXT NOT NULL REFERENCES project_resources(id) ON DELETE CASCADE,
+      day TEXT NOT NULL, check_count INTEGER NOT NULL DEFAULT 0, success_count INTEGER NOT NULL DEFAULT 0,
+      latency_sum_ms REAL NOT NULL DEFAULT 0, latency_count INTEGER NOT NULL DEFAULT 0,
+      UNIQUE(project_resource_id, day)
+    );
     CREATE TABLE IF NOT EXISTS sessions (
       sid TEXT PRIMARY KEY, sess TEXT NOT NULL, expires_at INTEGER NOT NULL
     );
@@ -127,6 +164,10 @@ function migrate(db: Database.Database) {
   ensureColumn(db, "coolify_resources", "deployment_in_progress", "INTEGER NOT NULL DEFAULT 0");
   ensureColumn(db, "coolify_resources", "last_successful_deployment_at", "TEXT");
   ensureColumn(db, "coolify_resources", "team_id", "TEXT NOT NULL DEFAULT 'legacy-default'");
+  ensureColumn(db, "coolify_resources", "name", "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, "coolify_resources", "resource_type", "TEXT NOT NULL DEFAULT 'application'");
+  ensureColumn(db, "coolify_resources", "resource_uuid", "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, "coolify_resources", "suggested_urls_json", "TEXT NOT NULL DEFAULT '[]'");
   ensureColumn(db, "sentinel_servers", "team_id", "TEXT NOT NULL DEFAULT 'legacy-default'");
   ensureLegacyTeam(db);
   migrateLegacyCoolifyResources(db);
@@ -136,11 +177,38 @@ function migrate(db: Database.Database) {
   ensureColumn(db, "projects", "maintenance_message_es", "TEXT NOT NULL DEFAULT ''");
   ensureColumn(db, "projects", "operational_notice_type", "TEXT NOT NULL DEFAULT 'none'");
   ensureColumn(db, "projects", "uptime_start_date", "TEXT");
+  ensureColumn(db, "projects", "monitoring_enabled", "INTEGER NOT NULL DEFAULT 1");
+  ensureColumn(db, "projects", "health_url", "TEXT");
+  ensureColumn(db, "projects", "health_method", "TEXT NOT NULL DEFAULT 'GET'");
+  ensureColumn(db, "projects", "health_timeout_ms", "INTEGER NOT NULL DEFAULT 10000");
+  ensureColumn(db, "projects", "expected_status_min", "INTEGER NOT NULL DEFAULT 200");
+  ensureColumn(db, "projects", "expected_status_max", "INTEGER NOT NULL DEFAULT 399");
   ensureColumn(db, "incidents", "trigger_error_code", "TEXT");
   ensureColumn(db, "incidents", "trigger_status_code", "INTEGER");
   ensureColumn(db, "incidents", "recovered_status_code", "INTEGER");
   ensureColumn(db, "health_state", "first_checked_at", "TEXT");
   ensureColumn(db, "health_state", "monitor_interval_ms_at_start", "INTEGER");
+  ensureColumn(db, "health_state", "status", "TEXT NOT NULL DEFAULT 'collecting'");
+  ensureColumn(db, "health_state", "consecutive_failures", "INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(db, "health_state", "last_checked_at", "TEXT");
+  ensureColumn(db, "health_state", "last_success_at", "TEXT");
+  ensureColumn(db, "health_state", "streak_started_at", "TEXT");
+  ensureColumn(db, "health_state", "latency_ms", "INTEGER");
+  ensureColumn(db, "health_checks", "id", "TEXT");
+  ensureColumn(db, "health_checks", "success", "INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(db, "health_checks", "status_code", "INTEGER");
+  ensureColumn(db, "health_checks", "latency_ms", "INTEGER");
+  ensureColumn(db, "health_checks", "error_code", "TEXT");
+  ensureColumn(db, "incidents", "id", "TEXT");
+  ensureColumn(db, "incidents", "ended_at", "TEXT");
+  ensureColumn(db, "incidents", "trigger_error_code", "TEXT");
+  ensureColumn(db, "incidents", "trigger_status_code", "INTEGER");
+  ensureColumn(db, "incidents", "recovered_status_code", "INTEGER");
+  ensureColumn(db, "daily_metrics", "check_count", "INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(db, "daily_metrics", "success_count", "INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(db, "daily_metrics", "latency_sum_ms", "REAL NOT NULL DEFAULT 0");
+  ensureColumn(db, "daily_metrics", "latency_count", "INTEGER NOT NULL DEFAULT 0");
+  migrateProjectResources(db);
   db.exec(`
     UPDATE projects
     SET uptime_start_date = COALESCE(
@@ -155,7 +223,40 @@ function migrate(db: Database.Database) {
       (SELECT MIN(day) || 'T00:00:00.000Z' FROM daily_metrics WHERE daily_metrics.project_id = health_state.project_id)
     )
     WHERE first_checked_at IS NULL;
+    UPDATE resource_health_state
+    SET first_checked_at = COALESCE(
+      (SELECT MIN(checked_at) FROM resource_health_checks WHERE resource_health_checks.project_resource_id = resource_health_state.project_resource_id),
+      (SELECT MIN(day) || 'T00:00:00.000Z' FROM resource_daily_metrics WHERE resource_daily_metrics.project_resource_id = resource_health_state.project_resource_id)
+    )
+    WHERE first_checked_at IS NULL;
   `);
+}
+
+function migrateProjectResources(db: Database.Database) {
+  const rows = db.prepare(`
+    SELECT p.id AS project_id,p.coolify_resource_id,cr.name,cr.created_at_source,
+      p.monitoring_enabled,p.health_url,p.health_method,p.health_timeout_ms,
+      p.expected_status_min,p.expected_status_max,p.uptime_start_date
+    FROM projects p JOIN coolify_resources cr ON cr.id=p.coolify_resource_id
+  `).all() as Record<string, unknown>[];
+  const insert = db.prepare(`
+    INSERT OR IGNORE INTO project_resources
+      (id,project_id,coolify_resource_id,label_en,label_es,display_order,uptime_enabled,health_url,health_method,health_timeout_ms,expected_status_min,expected_status_max,uptime_start_date)
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+  `);
+  const state = db.prepare(`INSERT OR IGNORE INTO resource_health_state(project_resource_id,status,consecutive_failures,last_checked_at,last_success_at,streak_started_at,latency_ms,first_checked_at,monitor_interval_ms_at_start) SELECT ?,status,consecutive_failures,last_checked_at,last_success_at,streak_started_at,latency_ms,first_checked_at,monitor_interval_ms_at_start FROM health_state WHERE project_id=?`);
+  const checks = db.prepare(`INSERT OR IGNORE INTO resource_health_checks(id,project_resource_id,checked_at,success,status_code,latency_ms,error_code) SELECT id,?,checked_at,success,status_code,latency_ms,error_code FROM health_checks WHERE project_id=?`);
+  const incidents = db.prepare(`INSERT OR IGNORE INTO resource_incidents(id,project_resource_id,started_at,ended_at,trigger_error_code,trigger_status_code,recovered_status_code) SELECT id,?,started_at,ended_at,trigger_error_code,trigger_status_code,recovered_status_code FROM incidents WHERE project_id=?`);
+  const daily = db.prepare(`INSERT OR IGNORE INTO resource_daily_metrics(project_resource_id,day,check_count,success_count,latency_sum_ms,latency_count) SELECT ?,day,check_count,success_count,latency_sum_ms,latency_count FROM daily_metrics WHERE project_id=?`);
+  db.transaction(() => {
+    for (const row of rows) {
+      const projectId = String(row.project_id);
+      const resourceId = `${projectId}:primary`;
+      const start = String(row.uptime_start_date ?? row.created_at_source ?? new Date().toISOString()).slice(0, 10);
+      insert.run(resourceId, projectId, String(row.coolify_resource_id), String(row.name ?? ""), String(row.name ?? ""), 0, Number(row.monitoring_enabled), row.health_url ?? null, row.health_method ?? "GET", Number(row.health_timeout_ms ?? 10_000), Number(row.expected_status_min ?? 200), Number(row.expected_status_max ?? 399), start);
+      state.run(resourceId, projectId); checks.run(resourceId, projectId); incidents.run(resourceId, projectId); daily.run(resourceId, projectId);
+    }
+  })();
 }
 
 function ensureColumn(db: Database.Database, table: string, column: string, definition: string) {

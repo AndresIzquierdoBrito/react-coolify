@@ -36,7 +36,6 @@ export function Dashboard({ locale, initialProjects, site, apiAvailable, sampleD
   const status = searchParams.get("status") ?? "";
   const technology = searchParams.get("technology") ?? "";
   const resourceType = searchParams.get("resourceType") ?? "";
-  const team = searchParams.get("team") ?? "";
   const sort = searchParams.get("sort") ?? "curated";
 
   const mounted = useSyncExternalStore(() => () => undefined, () => true, () => false);
@@ -106,9 +105,9 @@ export function Dashboard({ locale, initialProjects, site, apiAvailable, sampleD
 
   const displayedProjects = useMemo(() => previewId && detail?.id === previewId ? [detail, ...projects.filter((project) => project.id !== detail.id)] : projects, [detail, projects, previewId]);
   const filtered = useMemo(() => {
-    const items = displayedProjects.filter((project) => (!status || project.health.status === status) && (!technology || project.technologies.some((item) => item.slug === technology)) && (!resourceType || project.resourceType === resourceType) && (!team || project.team.id === team));
+    const items = displayedProjects.filter((project) => (!status || project.health.status === status) && (!technology || project.technologies.some((item) => item.slug === technology)) && (!resourceType || project.resourceTypes.includes(resourceType as "application" | "service")));
     return items.sort((a, b) => sort === "name" ? a.title.localeCompare(b.title, locale) : sort === "uptime" ? (b.health.uptime30d ?? -1) - (a.health.uptime30d ?? -1) : sort === "newest" ? b.createdAt.localeCompare(a.createdAt) : Number(b.featured) - Number(a.featured) || a.displayOrder - b.displayOrder);
-  }, [displayedProjects, locale, resourceType, sort, status, team, technology]);
+  }, [displayedProjects, locale, resourceType, sort, status, technology]);
 
   function setQuery(name: string, value?: string) {
     const params = new URLSearchParams(searchParams.toString());
@@ -125,7 +124,7 @@ export function Dashboard({ locale, initialProjects, site, apiAvailable, sampleD
   }
   function clearFilters() { const params = new URLSearchParams(searchParams.toString()); for (const name of ["status", "technology", "resourceType", "team"]) params.delete(name); router.replace(`${pathname}${params.size ? `?${params}` : ""}`, { scroll: false }); }
   function switchLocale() { const next = locale === "en" ? "es" : "en"; document.cookie = `izbri.locale=${next};path=/;max-age=31536000;samesite=lax`; router.push(`/${next}${searchParams.size ? `?${searchParams}` : ""}`); }
-  const filterCount = [status, technology, resourceType, team].filter(Boolean).length;
+  const filterCount = [status, technology, resourceType].filter(Boolean).length;
   const LanguageFlag = locale === "en" ? GB : ES;
 
   return (
@@ -143,7 +142,6 @@ export function Dashboard({ locale, initialProjects, site, apiAvailable, sampleD
               <FilterField label={t.status} value={status} onChange={(value) => setQuery("status", value)} options={["online", "degraded", "offline", "collecting", "unknown"].map((value) => ({ value, label: statusText(value as ProjectHealth, t) }))} all={t.all} />
               <FilterField label={t.technology} value={technology} onChange={(value) => setQuery("technology", value)} options={site.technologies.map((item) => ({ value: item.slug, label: item.name }))} all={t.all} />
               <FilterField label={t.resource} value={resourceType} onChange={(value) => setQuery("resourceType", value)} options={[{ value: "application", label: t.application }, { value: "service", label: t.service }]} all={t.all} />
-              <FilterField label={t.team} value={team} onChange={(value) => setQuery("team", value)} options={site.teams.map((item) => ({ value: item.id, label: item.name }))} all={t.all} />
               {filterCount > 0 && <button className="text-button" onClick={clearFilters}>{t.clear}</button>}
               <Popover.Arrow className="popover-arrow" /></Popover.Content></Popover.Portal>
           </Popover.Root>
@@ -168,7 +166,7 @@ export function Dashboard({ locale, initialProjects, site, apiAvailable, sampleD
         </section>
         {selectedSlug && <ProjectPanel ref={detailRef} project={detailSlug === selectedSlug ? detail : null} error={detailSlug === selectedSlug && detailError} locale={locale} contactUrl={site.contactUrl} t={t} onClose={closeDetail} />}
       </main>
-      <footer className="site-footer"><a className="footer-brand" href="https://izbri.com" target="_blank" rel="noreferrer" aria-label="izbri.com"><img className="footer-brand-mark" src="/izbri-projects-mark.png" alt="" aria-hidden="true" /><strong>zbri.com</strong><span>© {new Date().getFullYear()}</span></a><span className="footer-note">{t.footer}</span><span className="footer-line" /><nav className="footer-links" aria-label={locale === "en" ? "Izbri links" : "Enlaces de Izbri"}><a href="https://izbri.com" target="_blank" rel="noreferrer" aria-label={locale === "en" ? "Main website" : "Web principal"} title="izbri.com"><House size={18} /></a><a href="https://www.linkedin.com/in/andresizbri" target="_blank" rel="noreferrer" aria-label="LinkedIn" title="LinkedIn"><Linkedin size={18} /></a><a href={site.githubUrl ?? "https://github.com/AndresIzquierdoBrito"} target="_blank" rel="noreferrer" aria-label="GitHub" title="GitHub"><Github size={18} /></a></nav></footer>
+      <footer className="site-footer"><a className="footer-brand" href="https://izbri.com" target="_blank" rel="noreferrer" aria-label="izbri.com"><img className="footer-brand-mark" src="/izbri-projects-mark.png" alt="" aria-hidden="true" /><strong>izbri.com™</strong><span>© {new Date().getFullYear()}</span></a><span className="footer-note">{t.footer}</span><span className="footer-line" /><nav className="footer-links" aria-label={locale === "en" ? "Izbri links" : "Enlaces de Izbri"}><a href="https://izbri.com" target="_blank" rel="noreferrer" aria-label={locale === "en" ? "Main website" : "Web principal"} title="izbri.com"><House size={18} /></a><a href="https://www.linkedin.com/in/andresizbri" target="_blank" rel="noreferrer" aria-label="LinkedIn" title="LinkedIn"><Linkedin size={18} /></a><a href={site.githubUrl ?? "https://github.com/AndresIzquierdoBrito"} target="_blank" rel="noreferrer" aria-label="GitHub" title="GitHub"><Github size={18} /></a></nav></footer>
     </div>
   );
 }
@@ -181,7 +179,7 @@ function ProjectCard({ project, selected, locale, contactUrl, t, onOpen }: { pro
   return <article className={`project-card ${selected ? "is-selected" : ""}`} style={accentStyle(project.accentColor)}>
     <OperationalBanner project={project} locale={locale} contactUrl={contactUrl} t={t} />
     <button className="card-open" type="button" aria-label={`${t.viewDetails}: ${project.title}`} aria-pressed={selected} onClick={(event) => onOpen(project.slug, event.currentTarget)} />
-    <div className="project-identity"><div className="card-topline"><div className="card-labels"><span className="resource-pill">{project.resourceType === "service" ? t.service : t.application}</span><span className="source-pill">{project.team.name}</span>{project.coolify.sourceType && <span className="source-pill">{project.coolify.sourceType}</span>}{project.coolify.deploymentInProgress && <span className="deployment-pill"><Rocket size={12} />{t.deploying}</span>}</div>{project.featured && <span className="featured-star" aria-label="Featured">✦</span>}</div><h2>{project.title}</h2><p>{project.summary}</p>{project.coolify.lastSuccessfulDeploymentAt && <span className="last-deployment"><Rocket size={13} />{t.lastDeployed}: {formatRelativeTime(project.coolify.lastSuccessfulDeploymentAt, locale)}</span>}<div className="stack-block"><span>{t.stack}</span><div className="tech-list">{project.technologies.map((tech) => <span key={tech.id}>{tech.name}</span>)}</div></div></div>
+    <div className="project-identity"><div className="card-topline"><div className="card-labels"><span className="resource-pill">{project.resources.length} {t.resources}</span>{project.coolify.sourceType && <span className="source-pill">{project.coolify.sourceType}</span>}{project.resources.some((resource) => resource.coolify.deploymentInProgress) && <span className="deployment-pill"><Rocket size={12} />{t.deploying}</span>}</div>{project.featured && <span className="featured-star" aria-label="Featured">✦</span>}</div><h2>{project.title}</h2><p>{project.summary}</p>{project.coolify.lastSuccessfulDeploymentAt && <span className="last-deployment"><Rocket size={13} />{t.lastDeployed}: {formatRelativeTime(project.coolify.lastSuccessfulDeploymentAt, locale)}</span>}<div className="component-labels" aria-label="Project resources">{project.resources.map((resource) => <span key={resource.id}>{resource.label}</span>)}</div><div className="stack-block"><span>{t.stack}</span><div className="tech-list">{project.technologies.map((tech) => <span key={tech.id}>{tech.name}</span>)}</div></div></div>
     <div className="project-metrics"><StatusPill status={project.health.status} t={t} /><div className="metric-main"><strong>{formatPercent(project.health.uptime30d, t.noHistory)}</strong><span>{t.uptime30}</span></div><UptimeBars values={project.health.daily} label={t.uptime30} /><div className="metric-row"><span>{project.health.streakDays == null ? "—" : project.health.streakDays.toFixed(project.health.streakDays < 10 ? 1 : 0)} {t.daysRunning}</span><span>{project.health.latencyMs == null ? "—" : `${project.health.latencyMs}ms`} {t.response}</span></div></div>
     <div className="project-art">{project.cover ? <img src={project.cover.srcSmall} alt={project.cover.alt} loading="lazy" /> : <PlaceholderArt seed={project.slug} />}<a className="art-action" href={project.liveUrl} target="_blank" rel="noreferrer" aria-label={`${t.openApp}: ${project.title}`}><ArrowUpRight size={18} /></a></div>
     <a className="card-report-action" href={reportUrl(contactUrl, project, locale)} target="_blank" rel="noreferrer" aria-label={`${t.reportProblem}: ${project.title}`} title={t.reportProblem}><MessageCircleWarning size={17} /></a>
@@ -196,9 +194,10 @@ const ProjectPanel = forwardRef<HTMLElement, ProjectPanelProps>(function Project
     <button className="panel-close" aria-label={t.close} onClick={onClose}><X size={26} strokeWidth={3.25} /></button>
     {error ? <div className="panel-loading"><p>{t.unavailable}</p></div> : !project ? <div className="panel-loading"><span className="loading-ring" /><p>{locale === "en" ? "Loading the full story…" : "Cargando todos los detalles…"}</p></div> : <div className="panel-content" key={project.id}>
       <OperationalBanner project={project} locale={locale} contactUrl={contactUrl} t={t} panel />
-      <div className="panel-heading"><span className="resource-pill">{project.resourceType === "service" ? t.service : t.application}</span><span className="source-pill">{project.team.name}</span><StatusPill status={project.health.status} t={t} /><h2>{project.title}</h2><div className="tech-list">{project.technologies.map((tech) => <span key={tech.id}>{tech.name}</span>)}</div></div>
-      <section className="panel-section"><h3>{t.overview}</h3><p>{project.description}</p><div className="deployment-meta">{project.coolify.deploymentInProgress && <MetaFact label={t.deploying} value={t.ongoing} />}{project.coolify.lastSuccessfulDeploymentAt && <MetaFact label={t.lastDeployed} value={new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(new Date(project.coolify.lastSuccessfulDeploymentAt))} />}{project.coolify.sourceType && <MetaFact label={t.build} value={project.coolify.sourceType} />}{project.coolify.branch && <MetaFact label={t.branch} value={project.coolify.branch} />}{project.coolify.commitSha && <MetaFact label={t.commit} value={project.coolify.commitSha} mono />}{project.coolify.runtimeStatus && <MetaFact label={t.coolifyState} value={humanizeMachine(project.coolify.runtimeStatus)} />}<MetaFact label={t.lastSynchronized} value={new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(new Date(project.coolify.syncedAt))} />{project.coolify.sentinel && <MetaFact label={t.sentinel} value={project.coolify.sentinel.metricsEnabled ? t.sentinelMetrics : project.coolify.sentinel.enabled ? t.sentinelAgent : t.sentinelOff} />}{project.coolify.sentinel?.lastReportedAt && <MetaFact label={t.sentinelPulse} value={new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(new Date(project.coolify.sentinel.lastReportedAt))} />}</div></section>
+      <div className="panel-heading"><span className="resource-pill">{project.resources.length} {t.resources}</span><StatusPill status={project.health.status} t={t} /><h2>{project.title}</h2><div className="component-labels" aria-label="Project resources">{project.resources.map((resource) => <span key={resource.id}>{resource.label}</span>)}</div><div className="tech-list">{project.technologies.map((tech) => <span key={tech.id}>{tech.name}</span>)}</div></div>
+      <section className="panel-section"><h3>{t.overview}</h3><p>{project.description}</p><div className="deployment-meta">{project.resources.map((resource) => <ResourceMetadataCard key={resource.id} resource={resource} locale={locale} t={t} />)}</div></section>
       <section className="panel-section"><h3>{t.reliability}</h3>{project.health.status === "collecting" && <p className="collecting-explainer">{t.collectingExplanation}</p>}<div className="stat-grid">{[[t.period24h, project.uptime.h24], [t.period7d, project.uptime.d7], [t.period30d, project.uptime.d30], [t.allTime, project.uptime.all]].map(([label, value]) => <div className="stat-cell" key={String(label)}><span>{label}</span><strong>{formatPercent(value as number | null, "—")}</strong></div>)}</div><UptimeBars values={project.health.daily} label={t.uptime30} large /><LatencyChart values={project.latencySeries.map((point) => point.value)} label={t.latency} /><div className="detail-metrics"><p><span>{t.currentStreak}</span><strong>{project.health.streakDays == null ? "—" : `${project.health.streakDays.toFixed(1)} ${t.daysRunning}`}</strong></p><p><span>{t.latency}</span><strong>{project.health.latencyMs == null ? "—" : `${project.health.latencyMs} ms`}</strong></p><p><span>{t.lastCheck}</span><strong>{project.health.lastCheckedAt ? new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(new Date(project.health.lastCheckedAt)) : "—"}</strong></p></div></section>
+      <section className="panel-section"><h3>{t.componentReliability}</h3><div className="component-health-list">{project.resources.map((resource) => resource.uptimeEnabled && resource.uptime ? <ResourceReliability key={resource.id} resource={resource} locale={locale} t={t} /> : <article className="component-health-card unmonitored" key={resource.id}><strong>{resource.label}</strong><small>{resource.resourceType} · {t.coolifyOnly}</small></article>)}</div></section>
       <section className="panel-section"><h3>{t.incidents}</h3>{project.incidents.length === 0 ? <p>{t.noIncidents}</p> : <div className="incident-list">{project.incidents.map((incident) => <div key={incident.startedAt}><span className={incident.endedAt ? "recovered" : "ongoing"} /> <p><strong>{incident.endedAt ? t.recovered : t.ongoing}</strong><small>{new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(new Date(incident.startedAt))}{incident.endedAt ? ` → ${new Intl.DateTimeFormat(locale, { timeStyle: "short" }).format(new Date(incident.endedAt))}` : ""}</small><small>{incident.statusCode ? `HTTP ${incident.statusCode}` : incident.trigger ? humanizeMachine(incident.trigger) : ""}{incident.endedAt ? ` · ${formatDuration(incident.startedAt, incident.endedAt, locale)}` : ""}</small></p></div>)}</div>}</section>
       <div className="panel-actions">{project.caseStudyUrl && <a className="primary-button" href={project.caseStudyUrl} target="_blank" rel="noreferrer">{t.caseStudy}<ArrowUpRight size={17} /></a>}{project.repositoryUrl && <a className="secondary-button" href={project.repositoryUrl} target="_blank" rel="noreferrer"><Github size={17} />{t.repository}</a>}<a className="secondary-button report-problem-button" href={reportUrl(contactUrl, project, locale)} target="_blank" rel="noreferrer"><MessageCircleWarning size={17} />{t.reportProblem}</a></div>
       <ProjectCarousel key={project.id} project={project} t={t} />
@@ -206,15 +205,57 @@ const ProjectPanel = forwardRef<HTMLElement, ProjectPanelProps>(function Project
   </aside></>;
 });
 
+function resourceMetadataFacts(resource: ProjectDetail["resources"][number], locale: Locale, t: ReturnType<typeof getMessages>) {
+  const coolify = resource.coolify;
+  return [
+    coolify.deploymentInProgress && <MetaFact key="deployment" label={t.deploying} value={t.ongoing} />,
+    coolify.lastSuccessfulDeploymentAt && <MetaFact key="last-deployed" label={t.lastDeployed} value={new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(new Date(coolify.lastSuccessfulDeploymentAt))} />,
+    coolify.sourceType && <MetaFact key="build" label={t.build} value={coolify.sourceType} />,
+    coolify.branch && <MetaFact key="branch" label={t.branch} value={coolify.branch} />,
+    coolify.commitSha && <MetaFact key="commit" label={t.commit} value={coolify.commitSha} mono />,
+    <MetaFact key="sync" label={t.lastSynchronized} value={new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(new Date(coolify.syncedAt))} />,
+    coolify.sentinel && <MetaFact key="sentinel" label={t.sentinel} value={coolify.sentinel.metricsEnabled ? t.sentinelMetrics : coolify.sentinel.enabled ? t.sentinelAgent : t.sentinelOff} />,
+    coolify.sentinel?.lastReportedAt && <MetaFact key="pulse" label={t.sentinelPulse} value={new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(new Date(coolify.sentinel.lastReportedAt))} />,
+  ].filter(Boolean);
+}
+
+function ResourceMetadataCard({ resource, locale, t }: { resource: ProjectDetail["resources"][number]; locale: Locale; t: ReturnType<typeof getMessages> }) {
+  const runtimeStatus = resource.coolify.runtimeStatus;
+  const resourceType = resource.resourceType === "service" ? t.service : t.application;
+  return <article className="resource-meta-group" aria-label={`${resource.label} · ${resourceType}`}>
+    <header className="resource-meta-header">
+      <div className="resource-meta-identity"><h4>{resource.label}</h4><span>{resourceType}</span></div>
+      {runtimeStatus && <span className={`resource-runtime ${runtimeTone(runtimeStatus)}`}><i aria-hidden="true" />{runtimeLabel(runtimeStatus)}</span>}
+    </header>
+    <div className="resource-meta-facts">{resourceMetadataFacts(resource, locale, t)}</div>
+  </article>;
+}
+
+function runtimeTone(status: string) {
+  const normalized = status.toLowerCase();
+  if (normalized.includes("degraded") || normalized.includes("unhealthy") || normalized.includes("restarting")) return "is-warning";
+  if (normalized.includes("exited") || normalized.includes("stopped") || normalized.includes("error")) return "is-danger";
+  if (normalized.includes("healthy") || normalized.startsWith("running")) return "is-healthy";
+  return "is-neutral";
+}
+
+function runtimeLabel(status: string) { return humanizeMachine(status.replace(/[:_-]+unknown$/i, "")); }
+
+function ResourceReliability({ resource, locale, t }: { resource: ProjectDetail["resources"][number]; locale: Locale; t: ReturnType<typeof getMessages> }) {
+  return <article className="component-health-card"><div className="component-health-heading"><div><strong>{resource.label}</strong><small>{resource.resourceType}</small></div>{resource.health && <StatusPill status={resource.health.status} t={t} />}</div>{resource.uptime && resource.health && <><div className="stat-grid">{[[t.period24h, resource.uptime.h24], [t.period7d, resource.uptime.d7], [t.period30d, resource.uptime.d30], [t.allTime, resource.uptime.all]].map(([label, value]) => <div className="stat-cell" key={String(label)}><span>{label}</span><strong>{formatPercent(value as number | null, "—")}</strong></div>)}</div><UptimeBars values={resource.health.daily} label={`${resource.label} ${t.uptime30}`} large /><LatencyChart values={resource.latencySeries.map((point) => point.value)} label={`${resource.label} ${t.latency}`} /><div className="detail-metrics"><p><span>{t.currentStreak}</span><strong>{resource.health.streakDays == null ? "—" : `${resource.health.streakDays.toFixed(1)} ${t.daysRunning}`}</strong></p><p><span>{t.latency}</span><strong>{resource.health.latencyMs == null ? "—" : `${resource.health.latencyMs} ms`}</strong></p><p><span>{t.lastCheck}</span><strong>{resource.health.lastCheckedAt ? new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(new Date(resource.health.lastCheckedAt)) : "—"}</strong></p></div><div className="component-incidents"><strong>{t.incidents}</strong>{resource.incidents.length === 0 ? <small>{t.noIncidents}</small> : <div className="incident-list">{resource.incidents.map((incident) => <div key={incident.startedAt}><span className={incident.endedAt ? "recovered" : "ongoing"} /><p><strong>{incident.endedAt ? t.recovered : t.ongoing}</strong><small>{new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(new Date(incident.startedAt))}{incident.endedAt ? ` → ${new Intl.DateTimeFormat(locale, { timeStyle: "short" }).format(new Date(incident.endedAt))}` : ""}</small><small>{incident.statusCode ? `HTTP ${incident.statusCode}` : incident.trigger ? humanizeMachine(incident.trigger) : ""}{incident.endedAt ? ` · ${formatDuration(incident.startedAt, incident.endedAt, locale)}` : ""}</small></p></div>)}</div>}</div></>}</article>;
+}
+
 function OperationalBanner({ project, locale, contactUrl, t, panel = false }: { project: ProjectSummary; locale: Locale; contactUrl: string | null; t: ReturnType<typeof getMessages>; panel?: boolean }) {
   const incident = project.health.activeIncident;
-  const noticeType = incident ? "incident" : project.operationalNoticeType !== "none" ? project.operationalNoticeType : project.coolify.deploymentInProgress ? "update" : null;
+  const noticeType = incident ? "incident" : project.operationalNoticeType !== "none" ? project.operationalNoticeType : project.resources.some((resource) => resource.coolify.deploymentInProgress) ? "update" : null;
   if (!noticeType) return null;
   const title = noticeType === "incident" ? t.activeIncident : noticeType === "maintenance" ? t.noticeMaintenance : noticeType === "restart" ? t.noticeRestart : t.noticeUpdate;
   const NoticeIcon = noticeType === "incident" ? TriangleAlert : noticeType === "maintenance" ? Wrench : noticeType === "restart" ? RotateCw : Info;
+  const affected = project.resources.filter((resource) => resource.health?.activeIncident).map((resource) => resource.label);
+  const deploying = project.resources.filter((resource) => resource.coolify.deploymentInProgress).map((resource) => resource.label);
   const detail = incident
-    ? incident.statusCode ? `HTTP ${incident.statusCode}` : incident.trigger ? humanizeMachine(incident.trigger) : t.ongoing
-    : project.maintenanceMessage ?? t.deploying;
+    ? `${affected.length ? `${affected.join(", ")} · ` : ""}${incident.statusCode ? `HTTP ${incident.statusCode}` : incident.trigger ? humanizeMachine(incident.trigger) : t.ongoing}`
+    : `${noticeType === "update" && deploying.length ? `${deploying.join(", ")} · ` : ""}${project.maintenanceMessage ?? t.deploying}`;
   return <div className={`operational-banner notice-${noticeType} ${panel ? "panel-notice" : ""}`}>
     <NoticeIcon size={panel ? 20 : 18} />
     <span className="operational-copy"><strong>{title}</strong><small>{detail}</small>{incident && <small>{t.incidentUserPrompt}</small>}</span>
@@ -222,7 +263,7 @@ function OperationalBanner({ project, locale, contactUrl, t, panel = false }: { 
   </div>;
 }
 
-function MetaFact({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) { return <div><span>{label}</span><strong className={mono ? "mono" : ""}>{value}</strong></div>; }
+function MetaFact({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) { return <div className="meta-fact"><span>{label}</span><strong className={mono ? "mono" : ""} title={value}>{value}</strong></div>; }
 
 function ProjectCarousel({ project, t }: { project: ProjectDetail; t: ReturnType<typeof getMessages> }) {
   const slides: { id: string; src: string | null; alt: string }[] = [

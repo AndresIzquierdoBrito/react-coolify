@@ -27,7 +27,6 @@ export const projectHealthSchema = z.enum([
   "collecting",
   "unknown",
 ]);
-export const projectTeamSchema = z.object({ id: z.string(), name: z.string() });
 export const operationalNoticeTypeSchema = z.enum(["none", "maintenance", "restart", "update"]);
 export const calendarDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => {
   const date = new Date(`${value}T00:00:00.000Z`);
@@ -38,6 +37,71 @@ export const technologySchema = z.object({
   id: z.string(),
   name: z.string(),
   slug: z.string(),
+});
+
+const coolifySummarySchema = z.object({
+  runtimeStatus: z.string().nullable(),
+  sourceType: z.string().nullable(),
+  branch: z.string().nullable(),
+  commitSha: z.string().nullable(),
+  resourceUpdatedAt: z.string().nullable(),
+  deploymentInProgress: z.boolean(),
+  lastSuccessfulDeploymentAt: z.string().nullable(),
+  syncedAt: z.string(),
+  sentinel: z.object({
+    enabled: z.boolean(),
+    metricsEnabled: z.boolean(),
+    refreshRateSeconds: z.number().nullable(),
+    historyDays: z.number().nullable(),
+    pushIntervalSeconds: z.number().nullable(),
+    lastReportedAt: z.string().nullable(),
+  }).nullable(),
+});
+
+const resourceHealthSummarySchema = z.object({
+  status: projectHealthSchema,
+  uptime30d: z.number().min(0).max(100).nullable(),
+  uptimeStartDate: calendarDateSchema,
+  measurementStartedAt: z.string().nullable(),
+  assumedUptime: z.boolean(),
+  streakStartedAt: z.string().nullable(),
+  streakDays: z.number().nullable(),
+  latencyMs: z.number().nullable(),
+  lastCheckedAt: z.string().nullable(),
+  daily: z.array(z.number().min(0).max(100).nullable()),
+  activeIncident: z.object({
+    startedAt: z.string(),
+    trigger: z.string().nullable(),
+    statusCode: z.number().nullable(),
+  }).nullable(),
+});
+
+export const projectResourceSummarySchema = z.object({
+  id: z.string(),
+  resourceId: z.string(),
+  label: z.string(),
+  resourceName: z.string(),
+  resourceType: resourceTypeSchema,
+  uptimeEnabled: z.boolean(),
+  coolify: coolifySummarySchema,
+  health: resourceHealthSummarySchema.nullable(),
+});
+
+export const projectResourceDetailSchema = projectResourceSummarySchema.extend({
+  uptime: z.object({
+    h24: z.number().nullable(),
+    d7: z.number().nullable(),
+    d30: z.number().nullable(),
+    all: z.number().nullable(),
+  }).nullable(),
+  latencySeries: z.array(z.object({ at: z.string(), value: z.number() })),
+  incidents: z.array(z.object({
+    startedAt: z.string(),
+    endedAt: z.string().nullable(),
+    trigger: z.string().nullable(),
+    statusCode: z.number().nullable(),
+    recoveredStatusCode: z.number().nullable(),
+  })),
 });
 
 export const projectSummarySchema = z.object({
@@ -76,11 +140,12 @@ export const projectSummarySchema = z.object({
       statusCode: z.number().nullable(),
     }).nullable(),
   }),
+  resources: z.array(projectResourceSummarySchema).min(1),
+  resourceTypes: z.array(resourceTypeSchema).min(1),
   createdAt: z.string(),
   featured: z.boolean(),
   displayOrder: z.number(),
   accentColor: projectAccentSchema,
-  team: projectTeamSchema,
   coolify: z.object({
     runtimeStatus: z.string().nullable(),
     sourceType: z.string().nullable(),
@@ -127,6 +192,7 @@ export const projectDetailSchema = projectSummarySchema.extend({
       recoveredStatusCode: z.number().nullable(),
     }),
   ),
+  resources: z.array(projectResourceDetailSchema).min(1),
 });
 
 export type ProjectSummary = z.infer<typeof projectSummarySchema>;
@@ -137,7 +203,7 @@ export type ProjectAccent = z.infer<typeof projectAccentSchema>;
 
 const optionalUrl = z.union([z.string().url(), z.literal("")]).optional();
 
-export const projectInputSchema = z.object({
+const projectInputBaseSchema = z.object({
   slug: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).min(2).max(80),
   titleEn: z.string().trim().max(120),
   titleEs: z.string().trim().max(120),
@@ -156,15 +222,50 @@ export const projectInputSchema = z.object({
   published: z.boolean(),
   displayOrder: z.number().int().min(0),
   accentColor: projectAccentSchema,
-  monitoringEnabled: z.boolean(),
-  uptimeStartDate: calendarDateSchema,
+  // These project-level fields are retained in the output for backwards
+  // compatibility with older admin clients. New callers should configure
+  // monitoring exclusively on resources below.
+  monitoringEnabled: z.boolean().optional(),
+  uptimeStartDate: calendarDateSchema.optional(),
   healthUrl: optionalUrl,
-  healthMethod: z.enum(["GET", "HEAD"]),
-  healthTimeoutMs: z.number().int().min(1000).max(30000),
-  expectedStatusMin: z.number().int().min(100).max(599),
-  expectedStatusMax: z.number().int().min(100).max(599),
+  healthMethod: z.enum(["GET", "HEAD"]).optional(),
+  healthTimeoutMs: z.number().int().min(1000).max(30000).optional(),
+  expectedStatusMin: z.number().int().min(100).max(599).optional(),
+  expectedStatusMax: z.number().int().min(100).max(599).optional(),
   coverAltEn: z.string().trim().max(180),
   coverAltEs: z.string().trim().max(180),
+  resources: z.array(z.object({
+    resourceId: z.string().min(1),
+    labelEn: z.string().trim().max(80),
+    labelEs: z.string().trim().max(80),
+    displayOrder: z.number().int().min(0),
+    uptimeEnabled: z.boolean(),
+    uptimeStartDate: calendarDateSchema,
+    healthUrl: optionalUrl,
+    healthMethod: z.enum(["GET", "HEAD"]),
+    healthTimeoutMs: z.number().int().min(1000).max(30000),
+    expectedStatusMin: z.number().int().min(100).max(599),
+    expectedStatusMax: z.number().int().min(100).max(599),
+  }).refine((value) => value.expectedStatusMin <= value.expectedStatusMax, { message: "Minimum status cannot exceed maximum status.", path: ["expectedStatusMin"] })).min(1).max(32),
+});
+
+/**
+ * Normalize the legacy project-level monitor fields from the primary resource
+ * so old clients can keep sending them while the public contract is resource
+ * based. This also lets new API clients submit only `resources`.
+ */
+export const projectInputSchema = projectInputBaseSchema.transform((input) => {
+  const primary = input.resources[0]!;
+  return {
+    ...input,
+    monitoringEnabled: input.monitoringEnabled ?? input.resources.some((resource) => resource.uptimeEnabled),
+    uptimeStartDate: input.uptimeStartDate ?? primary.uptimeStartDate,
+    healthUrl: input.healthUrl ?? primary.healthUrl,
+    healthMethod: input.healthMethod ?? primary.healthMethod,
+    healthTimeoutMs: input.healthTimeoutMs ?? primary.healthTimeoutMs,
+    expectedStatusMin: input.expectedStatusMin ?? primary.expectedStatusMin,
+    expectedStatusMax: input.expectedStatusMax ?? primary.expectedStatusMax,
+  };
 });
 export type ProjectInput = z.infer<typeof projectInputSchema>;
 
